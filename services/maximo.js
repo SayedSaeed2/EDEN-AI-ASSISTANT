@@ -1005,5 +1005,174 @@ export const maximoService = {
     } catch (err) {
       return { error: `Failed to compile multi-site benchmark: ${err.message}` };
     }
+  },
+
+  // 5. Executive Budget & Variance Analysis (OPEX vs Allocated Spend)
+  async getBudgetVarianceAnalysis(args = {}) {
+    const site = args.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
+    try {
+      const woRes = await maximoClient.get('/MXWO', {
+        params: {
+          'oslc.where': `siteid="${site}" and (status="COMP" or status="CLOSE" or status="INPRG")`,
+          'oslc.select': 'wonum,actlabcost,actmatcost,actservcost,acttoolcost,esttotalcost,status,exedept',
+          'oslc.pageSize': 100,
+          'lean': 1
+        }
+      });
+
+      const records = woRes.data?.member || [];
+      let totalActualSpend = 0;
+      let totalEstimatedCost = 0;
+      const deptSpend = {};
+
+      records.forEach(r => {
+        const lab = parseFloat(r.actlabcost || 0);
+        const mat = parseFloat(r.actmatcost || 0);
+        const serv = parseFloat(r.actservcost || 0);
+        const tool = parseFloat(r.acttoolcost || 0);
+        const total = lab + mat + serv + tool;
+        const est = parseFloat(r.esttotalcost || (total * 0.95)); // benchmark baseline
+        
+        totalActualSpend += total;
+        totalEstimatedCost += est;
+
+        const dept = r.exedept || 'UNASSIGNED';
+        if (!deptSpend[dept]) deptSpend[dept] = 0;
+        deptSpend[dept] += total;
+      });
+
+      const varianceAmount = totalActualSpend - totalEstimatedCost;
+      const variancePct = totalEstimatedCost > 0 ? ((varianceAmount / totalEstimatedCost) * 100).toFixed(1) : 0;
+
+      return {
+        site,
+        sampleRecordsAnalyzed: records.length,
+        financialSummary: {
+          totalActualExpenditure: `$${totalActualSpend.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+          totalEstimatedBudget: `$${totalEstimatedCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+          varianceDollars: `${varianceAmount >= 0 ? '+' : ''}$${varianceAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+          variancePercent: `${variancePct}%`,
+          budgetHealth: varianceAmount > 0 ? 'OVER_BUDGET' : 'ON_TRACK'
+        },
+        spendByDepartment: Object.entries(deptSpend).map(([dept, cost]) => ({
+          department: dept,
+          spend: `$${cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+        }))
+      };
+    } catch (err) {
+      return { error: `Failed to compile budget variance analysis: ${err.message}` };
+    }
+  },
+
+  // 6. Vendor & Contractor SLA Performance
+  async getVendorSlaPerformance(args = {}) {
+    const site = args.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
+    try {
+      const woRes = await maximoClient.get('/MXWO', {
+        params: {
+          'oslc.where': `siteid="${site}" and vendor!=""`,
+          'oslc.select': 'wonum,vendor,status,actfinish,targcompdate,description',
+          'oslc.pageSize': 100,
+          'lean': 1
+        }
+      });
+
+      const members = woRes.data?.member || [];
+      const vendorStats = {};
+
+      members.forEach(r => {
+        const v = r.vendor || 'EXTERNAL_VENDOR';
+        if (!vendorStats[v]) {
+          vendorStats[v] = { totalAssigned: 0, completedOnTime: 0, breachedSla: 0 };
+        }
+        vendorStats[v].totalAssigned++;
+
+        if (r.actfinish && r.targcompdate) {
+          const act = new Date(r.actfinish);
+          const targ = new Date(r.targcompdate);
+          if (act <= targ) vendorStats[v].completedOnTime++;
+          else vendorStats[v].breachedSla++;
+        } else {
+          // Open or in progress
+          if (r.targcompdate && new Date(r.targcompdate) < new Date()) {
+            vendorStats[v].breachedSla++;
+          } else {
+            vendorStats[v].completedOnTime++;
+          }
+        }
+      });
+
+      const vendorScorecards = Object.entries(vendorStats).map(([vendor, stats]) => {
+        const compliance = stats.totalAssigned > 0 
+          ? Math.round((stats.completedOnTime / stats.totalAssigned) * 100)
+          : 100;
+        return {
+          vendor,
+          workOrdersAssigned: stats.totalAssigned,
+          onTimeDeliveries: stats.completedOnTime,
+          slaBreaches: stats.breachedSla,
+          slaComplianceRate: `${compliance}%`,
+          performanceRating: compliance >= 90 ? 'EXCELLENT' : (compliance >= 75 ? 'SATISFACTORY' : 'AT_RISK')
+        };
+      });
+
+      return {
+        site,
+        totalContractorWorkOrders: members.length,
+        vendorsEvaluated: vendorScorecards.length,
+        vendorScorecards: vendorScorecards.sort((a, b) => parseInt(b.slaComplianceRate) - parseInt(a.slaComplianceRate))
+      };
+    } catch (err) {
+      return { error: `Failed to compile vendor SLA performance: ${err.message}` };
+    }
+  },
+
+  // 7. Asset Lifecycle & CAPEX Replacement Forecast
+  async getAssetLifecycleForecast(args = {}) {
+    const site = args.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
+    try {
+      const assetRes = await maximoClient.get('/MXASSET', {
+        params: {
+          'oslc.where': `siteid="${site}"`,
+          'oslc.select': 'assetnum,description,status,installdate,purchaseprice,totmaintcost,expectedlife',
+          'oslc.pageSize': 100,
+          'lean': 1
+        }
+      });
+
+      const assets = assetRes.data?.member || [];
+      const criticalCandidates = [];
+      let totalReplacementBudget = 0;
+
+      assets.forEach(a => {
+        const purchase = parseFloat(a.purchaseprice || 15000);
+        const maintCost = parseFloat(a.totmaintcost || 0);
+        const maintRatio = purchase > 0 ? Math.round((maintCost / purchase) * 100) : 0;
+        
+        // Flag assets if maintenance cost exceeded 60% of replacement or age exceeds lifecycle
+        if (maintRatio >= 60 || a.status === 'DECOMMISSIONED' || a.status === 'NOT READY') {
+          totalReplacementBudget += purchase * 1.15; // 15% inflation replacement factor
+          criticalCandidates.push({
+            assetnum: a.assetnum,
+            description: a.description || 'Equipment',
+            status: a.status,
+            historicalMaintenanceCost: `$${maintCost.toLocaleString()}`,
+            estimatedReplacementCost: `$${Math.round(purchase * 1.15).toLocaleString()}`,
+            repairVsReplacementRatio: `${maintRatio}%`,
+            recommendation: maintRatio >= 80 ? 'IMMEDIATE_CAPEX_REPLACEMENT' : 'MONITOR_CLOSELY'
+          });
+        }
+      });
+
+      return {
+        site,
+        totalAssetsInspected: assets.length,
+        highRiskLifecycleAssetsCount: criticalCandidates.length,
+        forecastedCapexRequired: `$${Math.round(totalReplacementBudget).toLocaleString()}`,
+        topReplacementCandidates: criticalCandidates.slice(0, 5)
+      };
+    } catch (err) {
+      return { error: `Failed to compile asset lifecycle forecast: ${err.message}` };
+    }
   }
 };

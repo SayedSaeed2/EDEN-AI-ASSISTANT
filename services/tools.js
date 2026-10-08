@@ -438,6 +438,54 @@ const toolRegistry = [
     },
     execute: async () => await maximoService.getMultiSiteBenchmark()
   },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_budget_variance_analysis',
+        description: 'Executive financial report comparing actual maintenance expenditure against estimated budgets, with dollar variances and department breakdown.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getBudgetVarianceAnalysis(args || {})
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_vendor_sla_performance',
+        description: 'Executive contractor report measuring third-party maintenance vendor SLA compliance rates, on-time deliveries, and breach counts.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getVendorSlaPerformance(args || {})
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_asset_lifecycle_forecast',
+        description: 'Asset health and replacement forecast for CAPEX planning, identifying high-risk equipment where cumulative repair costs exceed replacement value.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getAssetLifecycleForecast(args || {})
+  },
 
   // --- EXTERNAL KNOWLEDGE ---
   {

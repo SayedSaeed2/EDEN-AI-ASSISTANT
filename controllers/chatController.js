@@ -375,6 +375,33 @@ export const chatController = {
         }
       };
     }
+    // 20. Executive Budget Variance
+    else if (/\b(budget|variance|budget health|over budget|under budget|capex vs opex|opex spend)\b/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_budget_variance_analysis',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    // 21. Vendor & Contractor SLA Performance
+    else if (/\b(vendor|contractor|sla|sla compliance|vendor performance|contractors? performance)\b/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_vendor_sla_performance',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    // 22. Asset Lifecycle & CAPEX Replacement Forecast
+    else if (/\b(asset lifecycle|replacement forecast|capex forecast|replace critical assets|money pit|asset replacement)\b/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_asset_lifecycle_forecast',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
 
     try {
       let response;

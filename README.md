@@ -24,7 +24,7 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 
 ---
 
-## 🛠️ Registered Tools & Maximo Capabilities (24 Tools)
+## 🛠️ Registered Tools & Maximo Capabilities (27 Tools)
 
 ### 1. Work Orders & Maintenance Operations
 - `get_maximo_work_orders`: Query filtered work orders by status (`INPRG`, `WAPPR`, `APPR`, etc.), location, and site.
@@ -53,12 +53,15 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 - `get_job_plans`: Query standardized Job Plans (JPs), duration, and scheduled task templates.
 - `get_failure_codes`: Lookup Maximo failure code hierarchies to standardize incident reporting.
 
-### 6. Executive & Reliability Analytics
+### 6. Executive, Director & CEO Analytics
 - `get_maintenance_kpis`: High-level operational health dashboard (active backlog, completion rate, status breakdown).
 - `get_executive_cost_summary`: Maintenance financial spend breakdown across labor, materials, tools, and contractor services.
+- `get_budget_variance_analysis`: Executive financial report comparing actual maintenance expenditure against estimated budgets with variance dollars and department breakdown.
+- `get_vendor_sla_performance`: Third-party contractor scorecard measuring SLA compliance rates, on-time deliveries, and breach counts.
+- `get_asset_lifecycle_forecast`: CAPEX replacement forecast identifying equipment where cumulative repairs exceed asset replacement value.
 - `get_reliability_metrics`: MTTR (Mean Time to Repair), Proactive vs. Reactive maintenance ratios, and Top 5 Bad Actor assets.
 - `get_backlog_aging`: Stagnant backlog risk analysis grouped by age (<7d, 7-30d, 30-90d, >90d).
-- `get_multi_site_benchmark`: Cross-site performance comparison.
+- `get_multi_site_benchmark`: Cross-site performance comparison across sites.
 
 ### 7. Diagnostics & Advanced OSLC
 - `advanced_maximo_query`: Custom OSLC REST where-clauses across `MXWO`, `MXSR`, `MXASSET`, and `MXINVENTORY`.
