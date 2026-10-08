@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>IBM Maximo EAM Assistant</title>
+  
+  <!-- PWA & Mobile Web Meta -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#030712">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Maximo EAM">
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/css/style.css?v=6">
+  <!-- Markdown Parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="brand">
+      <div class="badge-icon">M</div>
+      <div>
+        <div style="font-weight: 600; font-size: 15px;">Maximo EAM Assistant <span class="online-tag">Online</span></div>
+        <div class="subtitle">OSLC REST + AI Maintenance Reliability Engineer</div>
+      </div>
+    </div>
+    
+    <div class="header-controls">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <label for="site-select" style="font-size: 12px; color: #94a3b8;">Site:</label>
+        <select id="site-select" class="site-select">
+          <option value="">Loading sites...</option>
+        </select>
+      </div>
+      
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button id="btn-toggle-explorer" class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Toggle Explorer">📁 Assets</button>
+        <!-- Current Authenticated User & Sign Out -->
+        <div id="user-profile-badge" style="display: flex; align-items: center; gap: 6px;">
+          <span id="user-display-name" style="font-size: 11px; font-weight: 600; color: #e2e8f0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">User</span>
+          <button id="btn-logout" onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; font-size: 11px; padding: 3px 6px; border-radius: 4px; cursor: pointer;">Exit</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Live Working Memory Banner -->
+  <div class="memory-bar">
+    <span style="font-weight: 600; color: #e2e8f0;">🧠 Working Memory:</span>
+    <div class="memory-chips" id="memory-chips">
+      <span style="color: #64748b;">No active entities yet</span>
+    </div>
+    <button class="btn-clear-mem" onclick="clearMemory()">Reset Memory</button>
+  </div>
+
+  <!-- Main Split Layout -->
+  <div class="app-container">
+    
+    <!-- Left: Agent Chat & Operations -->
+    <section class="chat-section">
+      <main id="chat-box">
+        <div class="msg-row">
+          <div class="bubble bubble-agent">
+            <p>Connected to <strong>IBM Maximo EAM</strong>. Select an operational task or executive analytics report below:</p>
+            
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #38bdf8; font-weight: 700; margin-top: 14px;">👔 Top Management & Executive Analytics</div>
+            <div class="btn-group" style="margin-top: 8px;">
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide executive maintenance cost and spend breakdown (Labor, Material, Contractors, Tools)')">💰 Executive: Cost & Spend Breakdown</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide reliability analysis: MTTR, Proactive vs Reactive maintenance ratio, and Top Bad Actor assets')">📈 Reliability: MTTR & Proactivity Index</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Analyze backlog aging distribution (<7d, 7-30d, 30-90d, >90d) and stagnant risk')">⏳ Backlog: Aging Bands Analysis</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide cross-site benchmark comparing all Maximo sites with work volume and risk ratings')">🌐 Benchmark: Cross-Site League Table</button>
+            </div>
+
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 700; margin-top: 14px;">📋 Plant Operations & Maintenance</div>
+            <div class="btn-group" style="margin-top: 8px;">
+              <button class="btn-quick" onclick="sendPrompt('Provide full executive maintenance KPI dashboard summary')">📊 KPI: Maintenance Dashboard</button>
+              <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Alerts: Overdue Work Orders</button>
+              <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Stock: Low Inventory Alerts</button>
+              <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Read: Open Work Orders</button>
+              <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ Write: New Work Order (Prompt for Dept/Type)</button>
+              <button class="btn-quick" onclick="sendPrompt('How many assets are registered in the active site?')">🏷️ Assets: Total Asset Count</button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer>
+        <form class="input-wrap" id="chat-form">
+          <input id="user-input" type="text" placeholder="Type a message or instruction for IBM Maximo..." autocomplete="off">
+          <button type="submit" id="send-btn">Send</button>
+        </form>
+      </footer>
+    </section>
+
+    <!-- Right: Maximo Explorer (Sites, Assets & Locations Picker) -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title">Maximo Explorer</div>
+      </div>
+      
+      <div class="sidebar-tabs">
+        <button class="tab-btn active" data-tab="assets" onclick="switchTab('assets')">Assets</button>
+        <button class="tab-btn" data-tab="locations" onclick="switchTab('locations')">Locations</button>
+      </div>
+
+      <div class="sidebar-search">
+        <input type="text" id="sidebar-search" placeholder="Filter by tag or description...">
+      </div>
+
+      <div class="sidebar-content" id="items-list">
+        <div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">Loading Maximo records...</div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Client Application Script -->
+  <script src="/js/app.js?v=11"></script>
+</body>
+</html>

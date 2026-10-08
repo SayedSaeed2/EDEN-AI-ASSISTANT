@@ -1,0 +1,20 @@
+[
+  {
+    "username": "admin",
+    "password": "admin123",
+    "displayName": "System Administrator",
+    "role": "admin"
+  },
+  {
+    "username": "manager",
+    "password": "manager123",
+    "displayName": "Executive Manager",
+    "role": "executive"
+  },
+  {
+    "username": "engineer",
+    "password": "engineer123",
+    "displayName": "Maintenance Engineer",
+    "role": "engineer"
+  }
+]

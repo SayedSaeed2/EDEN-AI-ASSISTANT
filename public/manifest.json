@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "IBM Maximo EAM Assistant",
+  "short_name": "Maximo EAM",
+  "description": "Enterprise Asset Management AI Reliability Assistant for IBM Maximo",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#030712",
+  "theme_color": "#0284c7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
