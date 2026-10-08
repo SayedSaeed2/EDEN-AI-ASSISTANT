@@ -1,137 +1,163 @@
-# IBM Maximo 7.6 AI Assistant & Reliability Agent
+# ⚙️ IBM Maximo AI Assistant
 
-An enterprise agentic AI maintenance assistant that connects local Large Language Models (via **Ollama**) with **IBM Maximo 7.6** using native **OSLC REST APIs**, augmented with **Diagnostic Reasoning**, **Working Memory**, **Tavily Web Search**, and **Human-in-the-Loop (HITL)** governance.
+An intelligent, production-ready AI copilot for **IBM Maximo Asset Management (7.6 / MAS 8 / MAS 9)** powered by local offline LLMs via **Ollama**, resilient **Redis session management**, and an ultra-fast **Deterministic Intent Router**.
 
----
-
-## 🚀 Key Capabilities
-
-1. **Diagnostic Reasoning (Chain-of-Thought)**:
-   - Displays transparent, expandable `<thought>` blocks showing step-by-step diagnostic logic, entity resolution, and tool selection before executing actions.
-
-2. **Session & Working Memory**:
-   - Tracks operational entities across conversational turns:
-     - Active Site (`activeSite`)
-     - In-Focus Asset (`lastMentionedAsset`, e.g., `PUMP-101`)
-     - Operating Location (`lastMentionedLocation`)
-     - Executing Department (`lastMentionedDepartment`: `CIVIL`, `ELEC`, `ELEC-LC`, `HK`, `LS`, `MECH`)
-     - Work Type (`lastMentionedWorkType`: `RT`, `CM`, `EM`, `PRJ`)
-     - Handled Work Order (`lastMentionedWonum`)
-   - Visual Memory status bar with real-time entity chips and a "Reset Memory" button.
-
-3. **Maximo Explorer Sidebar**:
-   - Browse live Maximo **Assets** and **Locations** directly in the interface.
-   - Click any item to automatically populate actionable prompts.
-   - Live search/filtering and Site Switcher.
-
-4. **Human-In-The-Loop (HITL) Safety Guardrails**:
-   - Mutating operations (`POST`/`PATCH` for Work Orders, Status updates, Service Requests, Workflows) are automatically intercepted.
-   - Generates interactive **Approval Cards** with parameter inspection (`Confirm & Execute` or `Reject`).
-
-5. **Executive Maintenance KPIs & Reliability Dashboard**:
-   - Parallel site-wide KPI compilation (Active Backlog, Completion Rate, Status Breakdown).
-   - Overdue Work Order detection.
-   - Inventory low stock/reorder alerts.
-
-6. **Strict Maximo 7.6 Field Compliance**:
-   - Work Order / SR summary mapped directly to `DESCRIPTION`.
-   - Executing department mapped to `EXEDEPT`.
-   - Enforced Department validation: `CIVIL`, `ELEC`, `ELEC-LC`, `HK`, `LS`, `MECH`.
-   - Enforced Work Type validation: `RT`, `CM`, `EM`, `PRJ`.
+Designed for enterprise reliability, offline security, human-in-the-loop safety, and high-speed execution even on CPU-only infrastructure.
 
 ---
 
-## 🛠️ Registered Tools & OSLC Mapping
+## 🌟 Key Features
 
-| Tool Name | Maximo OSLC Object | Description | HITL Guard |
-| :--- | :--- | :--- | :---: |
-| `get_maximo_work_orders` | `MXWO` | Query work orders by status and site | No |
-| `get_work_order_count` | `MXWO` | Exact total count of work orders | No |
-| `create_maximo_work_order` | `MXWO` | Create WO with `DESCRIPTION`, `EXEDEPT`, `WORKTYPE`, `ASSETNUM`, `JPNUM` | **Yes** |
-| `update_maximo_work_order_status` | `MXWO` | Update status (e.g., approve WO) | **Yes** |
-| `route_maximo_workflow` | `MXWO` | Route record through Maximo Workflow | **Yes** |
-| `get_maintenance_kpis` | `MXWO` / `MXSR` | Multi-metric dashboard & plant health | No |
-| `get_overdue_work_orders` | `MXWO` | Active WOs past target completion date | No |
-| `get_asset_details` | `MXASSET` | Technical specs and vendor details for target asset | No |
-| `get_asset_count` | `MXASSET` | Total count of assets registered in site | No |
-| `get_assets` | `MXASSET` | List assets with status, location, and vendor | No |
-| `get_sites` | `MXSITE` | Active operational site IDs | No |
-| `get_locations` | `MXOPERLOC` | Operating locations list for placement | No |
-| `check_inventory` | `MXINVENTORY` | Current storeroom balance for a spare part | No |
-| `get_inventory_alerts` | `MXINVENTORY` | Items below safety stock reorder thresholds | No |
-| `get_service_request_count`| `MXSR` | Total Service Request ticket counts | No |
-| `create_service_request` | `MXSR` | Log ticket with `DESCRIPTION`, `EXEDEPT`, `WORKTYPE` | **Yes** |
-| `get_job_plans` | `MXJOBPLAN` | Search standard maintenance tasks & durations | No |
-| `get_failure_codes` | `MXFAILURE` | Problem / Cause / Remedy hierarchy | No |
-| `advanced_maximo_query` | Dynamic | Flexible OSLC `oslc.where` & `oslc.select` query | No |
-| `search_web` | External | Tavily search for OEM manuals & troubleshooting | No |
+- **⚡ Fast Intent Router (<50ms Dispatch)**:
+  - Bypasses LLM deliberation latency for routine queries (Work Order counts, Asset lists, Inventory alerts, Job Plans, KPIs, Overdue tasks).
+  - Eliminates small-model hallucinations and pseudo-code leakage.
+- **🛡️ Human-In-The-Loop (HITL) Safety Guard**:
+  - Automatically intercepts data-mutating actions (`create_maximo_work_order`, `update_maximo_work_order_status`, `create_service_request`, `route_maximo_workflow`).
+  - Requires explicit technician or supervisor confirmation before writing to Maximo OSLC APIs.
+- **🧠 Concurrency-Safe Memory & Distributed Redis Store**:
+  - Preserves working context (active site, last mentioned asset, location, department, work type).
+  - Multi-user isolation using **Redis** with seamless automatic fallback to local memory & Markdown audit trail (`data/memory.md`).
+- **🔒 100% On-Premise & Air-Gapped Ready**:
+  - Runs with local open-weights LLMs (`qwen2.5:1.5b` or `qwen2.5:3b`) via Ollama. No proprietary cloud dependencies.
+- **🌐 Bilingual Support**:
+  - Full natural language querying in both **English** and **Arabic**.
 
 ---
 
-## 📁 Project Architecture
+## 🛠️ Registered Tools & Maximo Capabilities (24 Tools)
+
+### 1. Work Orders & Maintenance Operations
+- `get_maximo_work_orders`: Query filtered work orders by status (`INPRG`, `WAPPR`, `APPR`, etc.), location, and site.
+- `get_work_order_count`: Fast count of work orders matching status filters.
+- `create_maximo_work_order`: Create new work orders with automated department (`MECH`, `ELEC`, `CIVIL`, etc.) and work type (`CM`, `RT`, `EM`, `PRJ`) mapping *(Requires Confirmation)*.
+- `update_maximo_work_order_status`: Change work order status *(Requires Confirmation)*.
+- `get_overdue_work_orders`: Flag backlog work orders that missed their target completion dates.
+- `route_maximo_workflow`: Progress work orders through active Maximo workflows.
+
+### 2. Assets & Locations
+- `get_asset_details`: Comprehensive operational metadata, status, and vendor info for a specific asset tag.
+- `get_asset_count`: Instant asset counts by site or operational status.
+- `get_assets`: Query lists of assets for an active site.
+- `get_locations`: List operating locations across facilities and plants.
+- `get_sites`: Retrieve all active IBM Maximo operating site IDs.
+
+### 3. Storerooms & Spare Parts Inventory
+- `check_inventory`: Check available current balances for parts across storerooms (e.g. `BEARING-01`).
+- `get_inventory_alerts`: Proactive alerts for parts reaching or falling below safety stock/reorder thresholds.
+
+### 4. Service Requests (SR)
+- `get_service_request_count`: Backlog and status counts for incoming user tickets.
+- `create_service_request`: Submit client/tenant service requests with automated category tagging *(Requires Confirmation)*.
+
+### 5. Standards & Troubleshooting
+- `get_job_plans`: Query standardized Job Plans (JPs), duration, and scheduled task templates.
+- `get_failure_codes`: Lookup Maximo failure code hierarchies to standardize incident reporting.
+
+### 6. Executive & Reliability Analytics
+- `get_maintenance_kpis`: High-level operational health dashboard (active backlog, completion rate, status breakdown).
+- `get_executive_cost_summary`: Maintenance financial spend breakdown across labor, materials, tools, and contractor services.
+- `get_reliability_metrics`: MTTR (Mean Time to Repair), Proactive vs. Reactive maintenance ratios, and Top 5 Bad Actor assets.
+- `get_backlog_aging`: Stagnant backlog risk analysis grouped by age (<7d, 7-30d, 30-90d, >90d).
+- `get_multi_site_benchmark`: Cross-site performance comparison.
+
+### 7. Diagnostics & Advanced OSLC
+- `advanced_maximo_query`: Custom OSLC REST where-clauses across `MXWO`, `MXSR`, `MXASSET`, and `MXINVENTORY`.
+- `search_web`: External search for vendor manuals and troubleshooting guides (via Tavily).
+
+---
+
+## 🏗️ Architecture Overview
 
 ```
-maximo-agent/
-├── config/
-│   └── index.js              # Centralized environment configurations
-├── controllers/
-│   ├── chatController.js    # Agent reasoning loop, memory injection & prompt rules
-│   └── maximoController.js  # Sites/Assets/Locations context & HITL approval handler
-├── services/
-│   ├── maximo.js            # IBM Maximo 7.6 OSLC REST client & business logic
-│   ├── memory.js            # In-memory session tracking & working context store
-│   ├── tools.js             # Declarative tool schema registry & dispatcher
-│   └── tavily.js            # Tavily external search integration
-├── public/
-│   ├── css/
-│   │   └── style.css        # Clean UI styling, reasoning accordions & memory chips
-│   ├── js/
-│   │   └── app.js           # Frontend logic, sidebar browsing & approval interactions
-│   └── index.html           # Modular semantic layout with Maximo Explorer
-├── server.js                # Express application entry point
-├── package.json
-├── .env                     # Environment variables (Maximo credentials, Ollama model)
-└── README.md                # Documentation & Architecture Reference
+Technician (Chat UI / API)
+        │
+        ▼
+   [Express.js Server]
+        │
+        ├───► [Fast Intent Router] ────► [Maximo OSLC REST API] (Direct <50ms)
+        │            │ (Fallback for complex prompts)
+        │            ▼
+        ├───► [Ollama Local LLM]
+        │       (qwen2.5:1.5b / qwen2.5:3b)
+        │            │
+        ├───► [HITL Safety Interceptor] ──► [Redis Store / In-Memory Fallback]
+        │            │
+        └───► [Memory & Context Service] ──► [data/memory.md Audit Trail]
 ```
 
 ---
 
-## ⚙️ Configuration (`.env`)
+## 🚀 Getting Started
 
-```ini
+### Prerequisites
+1. **Node.js**: v18.x or later.
+2. **Ollama**: Installed and running locally.
+3. **IBM Maximo 7.6 / MAS**: With OSLC REST API enabled and an authorized API key or credentials.
+4. *(Optional)* **Redis**: For multi-technician production clustering.
+
+### 1. Installation
+Clone the repository and install dependencies:
+```bash
+git clone https://github.com/SayedSaeed2/Maximo-AI-Assistant.git
+cd Maximo-AI-Assistant
+npm install
+```
+
+### 2. Pull the Local Model
+For standard CPU systems (recommended for fast inference):
+```bash
+ollama pull qwen2.5:1.5b
+```
+
+For GPU-accelerated workstations (4GB+ VRAM):
+```bash
+ollama pull qwen2.5:3b
+```
+
+### 3. Configure Environment Variables
+Create a `.env` file in the root directory:
+```properties
 PORT=3000
 
 # Ollama local model
-OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_MODEL=qwen2.5:1.5b
 OLLAMA_HOST=http://127.0.0.1:11434
 
-# Tavily API Key
-TAVILY_API_KEY=your-tavily-api-key
-
-# Maximo 7.6 OSLC REST API
-MAXIMO_BASE_URL=http://<maximo-host>:<port>/maximo
-MAXIMO_API_KEY=your-maximo-api-key
+# Maximo 7.6 OSLC REST API Configuration
+MAXIMO_BASE_URL=http://<YOUR_MAXIMO_HOST>:<PORT>/maximo
+MAXIMO_API_KEY=<YOUR_MAXIMO_API_KEY>
 MAXIMO_DEFAULT_SITE=TEST
+
+# Optional: External Search
+TAVILY_API_KEY=<YOUR_TAVILY_API_KEY>
+
+# Optional: Distributed Redis (Defaults to in-memory fallback if not running)
+REDIS_URL=redis://127.0.0.1:6379
+ENABLE_REDIS=true
 ```
+
+### 4. Start the Application
+```bash
+npm start
+```
+The application will be running at `http://localhost:3000`.
 
 ---
 
-## 🚦 Getting Started
+## 💬 Sample Prompts to Try
 
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+| Category | Example Prompt |
+| :--- | :--- |
+| **Work Orders** | *"Show in-progress work orders in location TEST"* |
+| **Asset Count** | *"How many assets are registered in site TEST?"* |
+| **Inventory** | *"Check inventory balance for item BEARING-01"* |
+| **Critical Stock** | *"Show low stock inventory alerts"* |
+| **Creation (HITL)** | *"Create a corrective work order for asset ASSET124 in department MECH"* |
+| **Status Updates** | *"Update work order WO-499627 status to APPR"* |
+| **Executive KPIs** | *"Show maintenance KPI dashboard"* |
+| **Failure Analysis** | *"Lookup failure codes for pumps"* |
 
-2. **Ensure Ollama is running**:
-   ```bash
-   ollama run qwen2.5:3b
-   ```
+---
 
-3. **Start the server**:
-   ```bash
-   npm start
-   ```
-
-4. **Access the application**:
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
+## 🛡️ License
+Distributed under the MIT License. See `LICENSE` for more information.
