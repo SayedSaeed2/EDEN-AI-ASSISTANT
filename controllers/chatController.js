@@ -313,7 +313,7 @@ export const chatController = {
       };
     }
     // 13. Executive Cost Summary
-    else if (/\b(cost summary|maintenance spend|expenditure|financial report|labor cost)\b/i.test(userQuery)) {
+    else if (/\b(cost summary|maintenance cost|spend breakdown|maintenance spend|expenditure|financial report|labor cost|contractors?|tools spend)\b/i.test(userQuery) || userQuery.includes('spend breakdown') || userQuery.includes('cost and spend')) {
       directToolCall = {
         function: {
           name: 'get_executive_cost_summary',
@@ -321,8 +321,34 @@ export const chatController = {
         }
       };
     }
-    // 14. Reliability Metrics
-    else if (/\b(reliability|mttr|mean time to repair|bad actor|bad actors|proactive ratio)\b/i.test(userQuery)) {
+    // 14. Comprehensive Reliability League (CM Ratio, PM Compliance, Backlog, MTTR, RT Comparison)
+    else if (/\b(cm ratio|pm compliance|backlog and mttr|compare all sites|reliability league|sites comparison|all sites benchmark|cross-site league|مقارنة المواقع)\b/i.test(userQuery) || (userQuery.includes('cm') && userQuery.includes('pm')) || (userQuery.includes('compare') && userQuery.includes('site'))) {
+      const siteMatch = lastUserMessage.match(/\b(?:for|in|site)\s+([A-Z0-9_\-]+)\b/i);
+      const isAllSites = /\b(all sites|across all|cross-site|كل المواقع)\b/i.test(userQuery);
+      const targetSite = (!isAllSites && siteMatch) ? siteMatch[1].toUpperCase() : null;
+
+      // Detect period from prompt
+      let period = '30d';
+      if (/\b(90\s*days?|quarter|last\s*3\s*months?|الربع\s*الاخير|٣\s*شهور)\b/i.test(userQuery)) {
+        period = '90d';
+      } else if (/\b(year|365\s*days?|ytd|past\s*year|last\s*12\s*months?|السنة|العام)\b/i.test(userQuery)) {
+        period = '365d';
+      } else if (/\b(all\s*time|historical|ever|كل\s*الوقت|تاريخيا)\b/i.test(userQuery)) {
+        period = 'all';
+      }
+
+      directToolCall = {
+        function: {
+          name: 'get_multi_site_reliability_league',
+          arguments: {
+            ...(targetSite && { siteid: targetSite }),
+            period
+          }
+        }
+      };
+    }
+    // 15. Reliability Single-Site Bad Actors & MTTR
+    else if (/\b(reliability|mttr|mean time to repair|bad actor|bad actors|proactivity index)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
           name: 'get_reliability_metrics',
@@ -330,7 +356,7 @@ export const chatController = {
         }
       };
     }
-    // 15. Backlog Aging
+    // 16. Backlog Aging
     else if (/\b(backlog aging|aging distribution|stagnant|aging report)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -339,7 +365,7 @@ export const chatController = {
         }
       };
     }
-    // 16. Multi-Site Benchmark
+    // 17. Multi-Site Benchmark
     else if (/\b(benchmark|multi-site|cross-site|site comparison|compare sites)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -348,7 +374,7 @@ export const chatController = {
         }
       };
     }
-    // 17. Maintenance KPIs Dashboard
+    // 18. Maintenance KPIs Dashboard
     else if (/\b(kpis?|kpi dashboard|maintenance metrics|operational health)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -357,7 +383,7 @@ export const chatController = {
         }
       };
     }
-    // 18. Locations list
+    // 19. Locations list
     else if (/\b(list|show|get|all)\s+locations\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -366,7 +392,7 @@ export const chatController = {
         }
       };
     }
-    // 19. Sites list
+    // 20. Sites list
     else if (/\b(list|show|get|all)\s+sites\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -375,7 +401,7 @@ export const chatController = {
         }
       };
     }
-    // 20. Executive Budget Variance
+    // 21. Executive Budget Variance
     else if (/\b(budget|variance|budget health|over budget|under budget|capex vs opex|opex spend)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -384,7 +410,7 @@ export const chatController = {
         }
       };
     }
-    // 21. Vendor & Contractor SLA Performance
+    // 22. Vendor & Contractor SLA Performance
     else if (/\b(vendor|contractor|sla|sla compliance|vendor performance|contractors? performance)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
@@ -393,12 +419,63 @@ export const chatController = {
         }
       };
     }
-    // 22. Asset Lifecycle & CAPEX Replacement Forecast
+    // 23. Asset Lifecycle & CAPEX Replacement Forecast
     else if (/\b(asset lifecycle|replacement forecast|capex forecast|replace critical assets|money pit|asset replacement)\b/i.test(userQuery)) {
       directToolCall = {
         function: {
           name: 'get_asset_lifecycle_forecast',
           arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    // 23. Arabic Native Intent Routing (أوامر الشغل، الأصول، قطع الغيار، البلاغات)
+    else if (/(اوامر\s*الشغل|أوامر\s*الشغل|اوامر\s*العمل|أوامر\s*العمل|وردرات)/i.test(userQuery)) {
+      let statusValue = null;
+      if (/(تحت\s*التنفيذ|شغالة|قيد\s*العمل)/i.test(userQuery)) statusValue = 'INPRG';
+      else if (/(معلقة|مفتوحة|في\s*الانتظار|تحت\s*الاعتماد)/i.test(userQuery)) statusValue = 'WAPPR';
+      else if (/(معتمدة|موافقة)/i.test(userQuery)) statusValue = 'APPR';
+      else if (/(منتهية|مغلقة|مكتملة)/i.test(userQuery)) statusValue = 'COMP';
+
+      directToolCall = {
+        function: {
+          name: 'get_maximo_work_orders',
+          arguments: {
+            siteid: defaultSite,
+            ...(statusValue && { status: statusValue }),
+            limit: 10
+          }
+        }
+      };
+    }
+    else if (/(كم\s*عدد\s*الاصول|عدد\s*الأصول|كم\s*أصل|كام\s*اصل)/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_asset_count',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    else if (/(نواقص|نقص|تنبيهات\s*المخزن|المخزون\s*الحرج|قطع\s*الغيار\s*الناقصة)/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_inventory_alerts',
+          arguments: { siteid: defaultSite, threshold: 5, limit: 10 }
+        }
+      };
+    }
+    else if (/(مؤشرات\s*الاداء|مؤشرات\s*الأداء|تقرير\s*الصيانة|لوحة\s*التحكم|kpi)/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_maintenance_kpis',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    else if (/(اوامر\s*شغل\s*متاخرة|أوامر\s*متأخرة|متأخرة|فائتة)/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_overdue_work_orders',
+          arguments: { siteid: defaultSite, limit: 10 }
         }
       };
     }
@@ -454,6 +531,22 @@ export const chatController = {
             }];
             return;
           } catch (e) {}
+        }
+
+        // 1b. Python import format hallucination: from maximo.oslc import tool_name OR tool_name = ...
+        const pyImportMatch = textContent.match(/(?:from\s+[a-zA-Z0-9_.]+\s+import\s+|import\s+)([a-zA-Z0-9_]+)/);
+        if (pyImportMatch) {
+          const importedName = pyImportMatch[1];
+          const isRegistered = toolsSchema.some(t => t.function.name === importedName);
+          if (isRegistered) {
+            msg.tool_calls = [{
+              function: {
+                name: importedName,
+                arguments: { siteid: memoryService.getSession(sessionId)?.workingContext?.activeSite || siteid || 'TEST' }
+              }
+            }];
+            return;
+          }
         }
 
         // 2. Function call format: create_maximo_work_order(...) or get_work_orders(...)

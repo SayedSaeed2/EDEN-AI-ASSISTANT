@@ -24,7 +24,7 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 
 ---
 
-## 🛠️ Registered Tools & Maximo Capabilities (27 Tools)
+## 🛠️ Registered Tools & Maximo Capabilities (28 Tools)
 
 ### 1. Work Orders & Maintenance Operations
 - `get_maximo_work_orders`: Query filtered work orders by status (`INPRG`, `WAPPR`, `APPR`, etc.), location, and site.
@@ -60,8 +60,8 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 - `get_vendor_sla_performance`: Third-party contractor scorecard measuring SLA compliance rates, on-time deliveries, and breach counts.
 - `get_asset_lifecycle_forecast`: CAPEX replacement forecast identifying equipment where cumulative repairs exceed asset replacement value.
 - `get_reliability_metrics`: MTTR (Mean Time to Repair), Proactive vs. Reactive maintenance ratios, and Top 5 Bad Actor assets.
-- `get_backlog_aging`: Stagnant backlog risk analysis grouped by age (<7d, 7-30d, 30-90d, >90d).
 - `get_multi_site_benchmark`: Cross-site performance comparison across sites.
+- `get_multi_site_reliability_league`: Cross-site comprehensive league comparing CM Ratio %, PM Compliance %, Active Backlog, MTTR (hrs), and RT Comparison ratio side-by-side with industry targets.
 
 ### 7. Diagnostics & Advanced OSLC
 - `advanced_maximo_query`: Custom OSLC REST where-clauses across `MXWO`, `MXSR`, `MXASSET`, and `MXINVENTORY`.

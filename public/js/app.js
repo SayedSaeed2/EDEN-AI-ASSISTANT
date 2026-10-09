@@ -273,6 +273,21 @@ function appendMessage(text, role, tools, reasoning) {
   const content = role === 'agent' && window.marked ? marked.parse(text) : escapeHtml(text);
   row.innerHTML = `<div class="bubble bubble-${role}">${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
   chatBox.appendChild(row);
+
+  // Automatically attach export action bars to all rendered data tables in agent bubble
+  if (role === 'agent') {
+    const bubble = row.querySelector('.bubble-agent');
+    if (bubble) {
+      const tables = bubble.querySelectorAll('table');
+      tables.forEach((tbl, idx) => {
+        // Skip if already has an export bar
+        if (tbl.previousElementSibling && tbl.previousElementSibling.classList.contains('table-export-bar')) return;
+        const exportBar = createTableExportBar(tbl, `maximo_report_${Date.now()}_${idx + 1}`);
+        tbl.parentNode.insertBefore(exportBar, tbl);
+      });
+    }
+  }
+
   chatBox.scrollTop = chatBox.scrollHeight;
 }
 
@@ -548,6 +563,254 @@ function renderDashboardWidgets(tools) {
         </div>
       `;
     }
+
+    // 6. Executive Budget Variance Analysis Widget
+    else if (t.tool === 'get_budget_variance_analysis') {
+      const fin = res.financialSummary || {};
+      const depts = res.spendByDepartment || [];
+      const isOver = fin.budgetHealth === 'OVER_BUDGET';
+
+      const deptRows = depts.map(d => `
+        <tr>
+          <td><span class="asset-tag-badge">${escapeHtml(d.department)}</span></td>
+          <td style="font-weight: 700; color: #f1f5f9;">${escapeHtml(d.spend)}</td>
+        </tr>
+      `).join('');
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>📊 OPEX & Budget Variance Financial Analysis</span>
+              <span class="dash-site-badge">${escapeHtml(res.site || 'SITE')}</span>
+            </div>
+            <span class="health-pill ${isOver ? 'critical' : 'healthy'}">${escapeHtml(fin.budgetHealth || 'ON_TRACK')}</span>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(3, 1fr);">
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Actual Expenditure</span>
+              <span class="kpi-stat-number" style="color: #38bdf8;">${escapeHtml(fin.totalActualExpenditure || '$0')}</span>
+              <span class="kpi-stat-sub">${res.sampleRecordsAnalyzed || 0} Records Analyzed</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Estimated Budget</span>
+              <span class="kpi-stat-number" style="color: #94a3b8;">${escapeHtml(fin.totalEstimatedBudget || '$0')}</span>
+              <span class="kpi-stat-sub">Baseline Allocation</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Budget Variance</span>
+              <span class="kpi-stat-number" style="color: ${isOver ? '#f87171' : '#34d399'};">${escapeHtml(fin.varianceDollars || '$0')} (${escapeHtml(fin.variancePercent || '0%')})</span>
+              <span class="kpi-stat-sub">${isOver ? '⚠️ Over Allocated Budget' : '✓ Under Budget'}</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div style="font-size: 11.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">Expenditure by Executing Department:</div>
+            <table class="bad-actors-table">
+              <thead><tr><th>Department</th><th>Cumulative Actual Spend</th></tr></thead>
+              <tbody>${deptRows || '<tr><td colspan="2">No spend recorded.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // 7. Vendor & Contractor SLA Scorecard Widget
+    else if (t.tool === 'get_vendor_sla_performance') {
+      const cards = res.vendorScorecards || [];
+      const cardRows = cards.map(v => {
+        const pClass = v.performanceRating === 'EXCELLENT' ? 'healthy' : (v.performanceRating === 'SATISFACTORY' ? 'warning' : 'critical');
+        return `
+          <tr>
+            <td><strong>${escapeHtml(v.vendor)}</strong></td>
+            <td>${v.workOrdersAssigned}</td>
+            <td>${v.onTimeDeliveries}</td>
+            <td style="color: ${v.slaBreaches > 0 ? '#f87171' : '#34d399'}; font-weight: 700;">${v.slaBreaches}</td>
+            <td style="font-weight: 700; color: #38bdf8;">${escapeHtml(v.slaComplianceRate)}</td>
+            <td><span class="health-pill ${pClass}" style="font-size: 9.5px; padding: 2px 6px;">${v.performanceRating}</span></td>
+          </tr>
+        `;
+      }).join('');
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>🤝 Contractor & Vendor SLA Performance League</span>
+              <span class="dash-site-badge">${escapeHtml(res.site || 'SITE')}</span>
+            </div>
+            <span class="health-pill healthy">${res.vendorsEvaluated || cards.length} Vendors Evaluated</span>
+          </div>
+
+          <table class="bad-actors-table" style="margin-top: 8px;">
+            <thead>
+              <tr>
+                <th>Vendor / Contractor</th>
+                <th>Assigned</th>
+                <th>On-Time</th>
+                <th>SLA Breaches</th>
+                <th>Compliance</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cardRows || '<tr><td colspan="6" style="text-align: center; color: #64748b;">No external contractors logged.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // 8. Asset Lifecycle & CAPEX Replacement Widget
+    else if (t.tool === 'get_asset_lifecycle_forecast') {
+      const cands = res.topReplacementCandidates || [];
+      const candRows = cands.map(c => `
+        <tr>
+          <td><span class="asset-tag-badge">${escapeHtml(c.assetnum)}</span></td>
+          <td style="font-size: 11px;">${escapeHtml(c.description)}</td>
+          <td style="color: #f87171; font-weight: 700;">${escapeHtml(c.historicalMaintenanceCost)}</td>
+          <td style="color: #38bdf8;">${escapeHtml(c.estimatedReplacementCost)}</td>
+          <td><span class="breakdown-counter">${escapeHtml(c.repairVsReplacementRatio)}</span></td>
+          <td><span class="health-pill ${c.recommendation.includes('IMMEDIATE') ? 'critical' : 'warning'}" style="font-size: 9px; padding: 2px 5px;">${c.recommendation.replace(/_/g, ' ')}</span></td>
+        </tr>
+      `).join('');
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>🏗️ Asset Lifecycle & CAPEX Renewal Forecast</span>
+              <span class="dash-site-badge">${escapeHtml(res.site || 'SITE')}</span>
+            </div>
+            <span class="health-pill ${res.highRiskLifecycleAssetsCount > 0 ? 'warning' : 'healthy'}">${res.highRiskLifecycleAssetsCount || 0} High-Risk Units</span>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(2, 1fr);">
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Forecasted CAPEX Renewal Required</span>
+              <span class="kpi-stat-number" style="color: #fbbf24;">${escapeHtml(res.forecastedCapexRequired || '$0')}</span>
+              <span class="kpi-stat-sub">Based on cumulative repair ratio &gt; 60%</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Total Assets Inspected</span>
+              <span class="kpi-stat-number" style="color: #f1f5f9;">${res.totalAssetsInspected || 0}</span>
+              <span class="kpi-stat-sub">${res.highRiskLifecycleAssetsCount || 0} exceed maintenance threshold</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div style="font-size: 11.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">Top CAPEX Replacement Candidates ("Money Pits"):</div>
+            <table class="bad-actors-table">
+              <thead>
+                <tr>
+                  <th>Asset Tag</th>
+                  <th>Description</th>
+                  <th>Past Repairs</th>
+                  <th>New Unit Est.</th>
+                  <th>Repair Ratio</th>
+                  <th>Recommendation</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${candRows || '<tr><td colspan="6" style="text-align: center; color: #64748b;">No high-risk asset replacements detected.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // 9. Cross-Site Comprehensive Reliability League Widget
+    else if (t.tool === 'get_multi_site_reliability_league') {
+      const rankings = res.leagueRankings || [];
+      const tg = res.industryTargets || {};
+
+      const rows = rankings.map((r, i) => {
+        const pClass = r.healthRating === 'TOP_PERFORMER' ? 'healthy' : (r.healthRating === 'ATTENTION_NEEDED' ? 'warning' : 'critical');
+        const cmVal = parseFloat(r.cmRatio) || 0;
+        const pmVal = parseFloat(r.pmCompliance) || 100;
+        const cmColor = cmVal > 35 ? '#f87171' : (cmVal > 20 ? '#fbbf24' : '#34d399');
+        const pmColor = pmVal >= 90 ? '#34d399' : (pmVal >= 80 ? '#fbbf24' : '#f87171');
+
+        return `
+          <tr>
+            <td style="font-weight: 700; color: #94a3b8;">#${i + 1}</td>
+            <td><strong>${escapeHtml(r.siteid)}</strong> <span style="font-size: 10.5px; color: #94a3b8;">(${escapeHtml(r.description)})</span></td>
+            <td style="color: ${cmColor}; font-weight: 700;">${escapeHtml(r.cmRatio)}</td>
+            <td style="color: ${pmColor}; font-weight: 700;">${escapeHtml(r.pmCompliance)}</td>
+            <td style="color: ${r.activeBacklog > 30 ? '#f87171' : '#f1f5f9'}; font-weight: 700;">${r.activeBacklog}</td>
+            <td style="color: #38bdf8;">${escapeHtml(r.mttrHours)}</td>
+            <td style="color: #10b981; font-weight: 600;">${escapeHtml(r.rtRatio)}</td>
+            <td><span class="health-pill ${pClass}" style="font-size: 9px; padding: 2px 6px;">${escapeHtml(r.healthRating.replace(/_/g, ' '))}</span></td>
+          </tr>
+        `;
+      }).join('');
+
+      const activePeriod = res.activePeriod || '30d';
+      const periodLabel = res.periodLabel || 'Last 30 Days';
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>🏆 All Sites Reliability League (CM, PM, Backlog, MTTR, RT)</span>
+              <span class="dash-site-badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4);">⏳ ${escapeHtml(periodLabel)}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div class="period-toggle-pills">
+                <button type="button" class="btn-period ${activePeriod === '30d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 30 days')">30D</button>
+                <button type="button" class="btn-period ${activePeriod === '90d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 90 days quarter')">90D</button>
+                <button type="button" class="btn-period ${activePeriod === '365d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the past year')">1 Year</button>
+                <button type="button" class="btn-period ${activePeriod === 'all' ? 'active' : ''}" onclick="sendPrompt('Compare all sites all time historical')">All</button>
+              </div>
+              <span class="health-pill healthy">${res.sitesEvaluated || rankings.length} Sites Benchmarked</span>
+            </div>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 8px;">
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">CM Ratio Benchmark</span>
+              <span class="kpi-stat-number" style="font-size: 14px; color: #34d399;">${escapeHtml(tg.cmRatioTarget || '< 20%')}</span>
+              <span class="kpi-stat-sub">SMRP World-Class</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">PM Compliance Target</span>
+              <span class="kpi-stat-number" style="font-size: 14px; color: #34d399;">${escapeHtml(tg.pmComplianceTarget || '>= 90%')}</span>
+              <span class="kpi-stat-sub">Schedule Adherence</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Target MTTR</span>
+              <span class="kpi-stat-number" style="font-size: 14px; color: #38bdf8;">${escapeHtml(tg.mttrTarget || '< 3.5 hrs')}</span>
+              <span class="kpi-stat-sub">Restore Speed</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">RT Proactivity Target</span>
+              <span class="kpi-stat-number" style="font-size: 14px; color: #10b981;">${escapeHtml(tg.rtProactiveTarget || '>= 80%')}</span>
+              <span class="kpi-stat-sub">Planned vs Reactive</span>
+            </div>
+          </div>
+
+          <table class="bad-actors-table" style="margin-top: 10px;">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Site ID</th>
+                <th>CM Ratio (%)</th>
+                <th>PM Compliance (%)</th>
+                <th>Active Backlog</th>
+                <th>MTTR (hrs)</th>
+                <th>RT Ratio (%)</th>
+                <th>Health Rating</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || '<tr><td colspan="8" style="text-align: center; color: #64748b;">No sites evaluated.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
   }
 
   return html ? `<div class="dashboard-widget-container">${html}</div>` : '';
@@ -671,6 +934,202 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.log('[PWA] Service Worker registration failed:', err));
   });
 }
+
+// Voice Dictation (Arabic & English) via HTML5 Web Speech API
+let speechRecognition = null;
+let isListening = false;
+
+window.toggleVoiceInput = function() {
+  const voiceBtn = document.getElementById('voice-btn');
+  const input = document.getElementById('user-input');
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert("Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.");
+    return;
+  }
+
+  if (isListening) {
+    if (speechRecognition) speechRecognition.stop();
+    return;
+  }
+
+  speechRecognition = new SpeechRecognition();
+  speechRecognition.continuous = false;
+  speechRecognition.interimResults = true;
+  // Support mixed Arabic/English or default to Arabic (ar-EG / ar-SA) or user's system language
+  speechRecognition.lang = navigator.language.startsWith('ar') ? 'ar-EG' : 'en-US';
+
+  speechRecognition.onstart = () => {
+    isListening = true;
+    if (voiceBtn) voiceBtn.classList.add('listening');
+    if (input) input.placeholder = "Listening... تكلم الآن (عربي / English)...";
+  };
+
+  speechRecognition.onresult = (event) => {
+    let transcript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      transcript += event.results[i][0].transcript;
+    }
+    if (input) {
+      input.value = transcript;
+    }
+  };
+
+  speechRecognition.onerror = (event) => {
+    console.warn('Speech recognition error:', event.error);
+    stopListening();
+  };
+
+  speechRecognition.onend = () => {
+    stopListening();
+    if (input && input.value.trim().length > 0) {
+      // Auto-focus input ready for send
+      input.focus();
+    }
+  };
+
+  function stopListening() {
+    isListening = false;
+    if (voiceBtn) voiceBtn.classList.remove('listening');
+    if (input) input.placeholder = "Type or speak a message for IBM Maximo (English or بالعربي)...";
+  }
+
+  try {
+    speechRecognition.start();
+  } catch (err) {
+    console.error('Failed to start speech recognition:', err);
+    stopListening();
+  }
+};
+
+// ==========================================
+// EXPORT & REPORTING UTILITIES (CSV, EXCEL, PDF)
+// ==========================================
+
+// Create export toolbar DOM element for a given table
+function createTableExportBar(tableEl, baseName = 'maximo_report') {
+  const bar = document.createElement('div');
+  bar.className = 'table-export-bar';
+  bar.innerHTML = `
+    <span>📥 Export:</span>
+    <button type="button" class="btn-export btn-export-csv" title="Export as CSV spreadsheet">📄 CSV</button>
+    <button type="button" class="btn-export btn-export-excel" title="Export as Microsoft Excel (.xlsx)">📊 Excel</button>
+    <button type="button" class="btn-export btn-export-pdf" title="Export as PDF Document">📑 PDF</button>
+  `;
+
+  bar.querySelector('.btn-export-csv').onclick = () => exportTableToCSV(tableEl, `${baseName}.csv`);
+  bar.querySelector('.btn-export-excel').onclick = () => exportTableToExcel(tableEl, `${baseName}.xlsx`);
+  bar.querySelector('.btn-export-pdf').onclick = () => exportTableToPDF(tableEl, 'IBM Maximo Maintenance Report', `${baseName}.pdf`);
+
+  return bar;
+}
+
+// 1. Export Table to CSV
+window.exportTableToCSV = function(tableEl, filename = 'report.csv') {
+  if (!tableEl) return;
+  const rows = Array.from(tableEl.querySelectorAll('tr'));
+  const csvLines = [];
+
+  rows.forEach(row => {
+    const cells = Array.from(row.querySelectorAll('th, td'));
+    const line = cells.map(c => {
+      let text = c.innerText.trim().replace(/"/g, '""');
+      return `"${text}"`;
+    }).join(',');
+    csvLines.push(line);
+  });
+
+  const csvContent = '\uFEFF' + csvLines.join('\r\n'); // Include UTF-8 BOM for Arabic & symbols
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// 2. Export Table to Excel (.xlsx) using SheetJS
+window.exportTableToExcel = function(tableEl, filename = 'report.xlsx') {
+  if (!tableEl) return;
+  if (typeof XLSX === 'undefined') {
+    alert("Excel library is loading, please try again in a moment.");
+    return;
+  }
+
+  try {
+    const wb = XLSX.utils.table_to_book(tableEl, { sheet: "Maximo Report" });
+    XLSX.writeFile(wb, filename);
+  } catch (err) {
+    console.error('Excel export error:', err);
+    // Fallback to CSV if SheetJS fails
+    exportTableToCSV(tableEl, filename.replace(/\.xlsx$/i, '.csv'));
+  }
+};
+
+// 3. Export Table to Formatted PDF using jsPDF & AutoTable
+window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report', filename = 'report.pdf') {
+  if (!tableEl) return;
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) {
+    alert("PDF library is loading, please try again in a moment.");
+    return;
+  }
+
+  try {
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'pt',
+      format: 'a4'
+    });
+
+    const activeSite = document.getElementById('site-select')?.value || 'TEST';
+
+    // Header Branding
+    doc.setFillColor(3, 7, 18); // Dark Navy background header
+    doc.rect(0, 0, doc.internal.pageSize.width, 50, 'F');
+    
+    doc.setFontSize(16);
+    doc.setTextColor(56, 189, 248); // Sky blue text
+    doc.text('IBM Maximo Asset Management — AI Assistant', 30, 30);
+
+    doc.setFontSize(10);
+    doc.setTextColor(148, 163, 184); // Slate grey
+    doc.text(`Report: ${reportTitle}  |  Site: ${activeSite}  |  Generated: ${new Date().toLocaleString()}`, 30, 68);
+
+    // AutoTable render
+    doc.autoTable({
+      html: tableEl,
+      startY: 85,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [56, 189, 248],
+        fontStyle: 'bold',
+        fontSize: 10
+      },
+      styles: {
+        fontSize: 9,
+        cellPadding: 6,
+        overflow: 'linebreak'
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
+      margin: { left: 30, right: 30 }
+    });
+
+    // Save PDF
+    doc.save(filename);
+  } catch (err) {
+    console.error('PDF export error:', err);
+    alert('Failed to generate PDF. Falling back to Excel.');
+    exportTableToExcel(tableEl, filename.replace(/\.pdf$/i, '.xlsx'));
+  }
+};
 
 // Initial load
 (async () => {

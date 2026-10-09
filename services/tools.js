@@ -486,6 +486,27 @@ const toolRegistry = [
     },
     execute: async (args) => await maximoService.getAssetLifecycleForecast(args || {})
   },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_multi_site_reliability_league',
+        description: 'Comprehensive cross-site reliability league comparing CM Ratio, PM Compliance %, Active Backlog, MTTR (Mean Time to Repair), and RT Comparison ratio across all operating Maximo sites.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Specific Maximo Site ID (optional). If omitted, compares all operating sites.' },
+            period: { 
+              type: 'string', 
+              enum: ['30d', '90d', '365d', 'all'],
+              description: 'Evaluation time window: 30d (Last 30 Days/Month, default), 90d (Last Quarter), 365d (Past Year), or all (All-time history).' 
+            }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getMultiSiteReliabilityLeague(args || {})
+  },
 
   // --- EXTERNAL KNOWLEDGE ---
   {

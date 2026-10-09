@@ -217,6 +217,95 @@ header {
   margin: 8px 0;
 }
 
+/* Table & Report Export Buttons Bar */
+.table-export-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 12px 0;
+  padding: 4px 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 6px;
+  width: fit-content;
+}
+
+.table-export-bar span {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.btn-export {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.btn-export:hover {
+  background: #334155;
+  border-color: #64748b;
+  color: #ffffff;
+}
+
+.btn-export-csv:hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
+.btn-export-excel:hover {
+  border-color: #34d399;
+  color: #34d399;
+}
+
+.btn-export-pdf:hover {
+  border-color: #f87171;
+  color: #f87171;
+}
+
+/* Period Toggle Pills */
+.period-toggle-pills {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.btn-period {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-period:hover {
+  color: #f8fafc;
+  background: rgba(51, 65, 85, 0.5);
+}
+
+.btn-period.active {
+  background: #6366f1;
+  color: #ffffff;
+}
+
 /* Input Footer */
 footer {
   background: #111827;
@@ -240,6 +329,39 @@ input[type="text"] {
   border-radius: 8px;
   outline: none;
   font-size: 14px;
+}
+
+.btn-voice {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  font-size: 16px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-voice:hover {
+  background: #334155;
+  border-color: #64748b;
+}
+
+.btn-voice.listening {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ef4444;
+  animation: pulse-ring 1.5s infinite;
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
 .btn-tts {
