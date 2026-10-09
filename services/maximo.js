@@ -1372,5 +1372,178 @@ export const maximoService = {
     } catch (err) {
       return { error: `Failed to compile multi-site reliability league: ${err.message}` };
     }
+  },
+
+  // 9. Asset Criticality & Operational Risk Priority Matrix (RPN = Probability x Consequence)
+  async getAssetCriticalityRiskMatrix(args = {}) {
+    const site = args.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
+    try {
+      // Query assets using standard, universally supported fields in MXASSET
+      let assetRes;
+      try {
+        assetRes = await maximoClient.get('/MXASSET', {
+          params: {
+            'oslc.where': `siteid="${site}"`,
+            'oslc.select': 'assetnum,description,status,priority,installdate,totmaintcost',
+            'oslc.pageSize': 100,
+            'lean': 1
+          }
+        });
+      } catch (assetErr) {
+        // Fallback without totmaintcost if object structure does not expose it
+        assetRes = await maximoClient.get('/MXASSET', {
+          params: {
+            'oslc.where': `siteid="${site}"`,
+            'oslc.select': 'assetnum,description,status,priority,installdate',
+            'oslc.pageSize': 100,
+            'lean': 1
+          }
+        });
+      }
+
+      // Query work orders with clean oslc.where (avoid complex nested ORs which cause 400 in Maximo OSLC)
+      let woRes;
+      try {
+        woRes = await maximoClient.get('/MXWO', {
+          params: {
+            'oslc.where': `siteid="${site}"`,
+            'oslc.select': 'wonum,assetnum,worktype,status',
+            'oslc.pageSize': 150,
+            'lean': 1
+          }
+        });
+      } catch (woErr) {
+        woRes = { data: { member: [] } };
+      }
+
+      const assets = assetRes?.data?.member || [];
+      const allWOs = woRes?.data?.member || [];
+      // Filter open backlog in memory
+      const openWOs = allWOs.filter(w => ['WAPPR', 'APPR', 'INPRG', 'WSCH'].includes(w.status));
+
+      // Map open backlog count per asset
+      const assetBacklog = {};
+      openWOs.forEach(w => {
+        if (w.assetnum) {
+          assetBacklog[w.assetnum] = (assetBacklog[w.assetnum] || 0) + 1;
+        }
+      });
+
+      const riskCategories = {
+        CRITICAL_HIGH: [],    // Priority 1-2 & High Backlog/Cost
+        MODERATE_RISK: [],    // Priority 3 or Moderate Backlog
+        LOW_RISK: []          // Priority 4-5
+      };
+
+      assets.forEach(a => {
+        const rawPriority = parseInt(a.priority || 3);
+        const backlogCount = assetBacklog[a.assetnum] || 0;
+        const maintCost = parseFloat(a.totmaintcost || 0);
+
+        // Calculate Risk Score: 1-100 scale
+        // In Maximo: Priority 1 = most critical, 5 = lowest
+        const consequenceScore = Math.max(1, (6 - rawPriority) * 20); // 1->100, 2->80, 3->60, 4->40, 5->20
+        const probabilityScore = Math.min(100, (backlogCount * 25) + (maintCost > 20000 ? 30 : 10));
+        const riskScore = Math.round((consequenceScore * 0.6) + (probabilityScore * 0.4));
+
+        const item = {
+          assetnum: a.assetnum,
+          description: a.description || 'Equipment',
+          priorityRating: rawPriority,
+          activeBacklog: backlogCount,
+          totalRepairSpend: maintCost > 0 ? `$${maintCost.toLocaleString()}` : 'N/A',
+          calculatedRiskScore: riskScore,
+          singlePointOfFailure: rawPriority <= 2,
+          recommendation: riskScore >= 75 ? 'IMMEDIATE_INTERVENTION' : (riskScore >= 50 ? 'PREVENTATIVE_AUDIT' : 'ROUTINE_MONITORING')
+        };
+
+        if (riskScore >= 70 || (rawPriority <= 2 && backlogCount > 0)) {
+          riskCategories.CRITICAL_HIGH.push(item);
+        } else if (riskScore >= 45) {
+          riskCategories.MODERATE_RISK.push(item);
+        } else {
+          riskCategories.LOW_RISK.push(item);
+        }
+      });
+
+      // Sort critical assets by calculated risk score descending
+      riskCategories.CRITICAL_HIGH.sort((a, b) => b.calculatedRiskScore - a.calculatedRiskScore);
+
+      return {
+        site,
+        totalAssetsEvaluated: assets.length,
+        riskDistribution: {
+          criticalHighRisk: riskCategories.CRITICAL_HIGH.length,
+          moderateRisk: riskCategories.MODERATE_RISK.length,
+          lowRiskStable: riskCategories.LOW_RISK.length
+        },
+        plantRiskHealth: riskCategories.CRITICAL_HIGH.length > 5 ? 'ELEVATED_VULNERABILITY' : 'CONTROLLED_RISK',
+        topCriticalVulnerableAssets: riskCategories.CRITICAL_HIGH.slice(0, 5)
+      };
+    } catch (err) {
+      return { error: `Failed to compile asset criticality risk matrix: ${err.response?.data?.Error?.message || err.message}` };
+    }
+  },
+
+  // 10. Comprehensive C-Suite Executive Audit Brief (Boardroom-Ready Consolidated Report)
+  async generateExecutiveAuditBrief(args = {}) {
+    const site = args.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
+    try {
+      // Gather financial, reliability, and risk telemetry concurrently
+      const [budgetRes, reliabilityRes, riskRes, vendorRes] = await Promise.all([
+        this.getBudgetVarianceAnalysis({ siteid: site }).catch(() => ({})),
+        this.getMultiSiteReliabilityLeague({ siteid: site, period: '30d' }).catch(() => ({})),
+        this.getAssetCriticalityRiskMatrix({ siteid: site }).catch(() => ({})),
+        this.getVendorSlaPerformance({ siteid: site }).catch(() => ({}))
+      ]);
+
+      const fin = budgetRes.financialSummary || {};
+      const relRanking = reliabilityRes.leagueRankings?.[0] || {};
+      const riskSummary = riskRes.riskDistribution || {};
+      const topVendors = vendorRes.vendorScorecards?.slice(0, 3) || [];
+
+      // Synthesize strategic executive findings
+      const strategicFindings = [];
+      if (fin.budgetHealth === 'OVER_BUDGET') {
+        strategicFindings.push(`OPEX expenditure exceeds baseline allocation by ${fin.variancePercent || '0%'} (${fin.varianceDollars || '$0'}).`);
+      } else {
+        strategicFindings.push(`Maintenance spend is under budget with a favorable variance of ${fin.varianceDollars || '$0'}.`);
+      }
+
+      if (parseFloat(relRanking.cmRatio || '0') > 30) {
+        strategicFindings.push(`Reactive breakdown ratio is elevated at ${relRanking.cmRatio}, driving high firefighting overtime.`);
+      } else {
+        strategicFindings.push(`Proactive maintenance regime is healthy with ${relRanking.rtRatio || '100%'} planned routine adherence.`);
+      }
+
+      if ((riskSummary.criticalHighRisk || 0) > 0) {
+        strategicFindings.push(`${riskSummary.criticalHighRisk} high-consequence critical assets require immediate preventive intervention.`);
+      }
+
+      return {
+        briefTitle: `Executive Maintenance & Asset Reliability Audit Brief`,
+        site,
+        generatedTimestamp: new Date().toISOString(),
+        overallPlantStatus: (fin.budgetHealth === 'OVER_BUDGET' || (riskSummary.criticalHighRisk || 0) > 3) ? 'ATTENTION_REQUIRED' : 'OPERATIONALLY_STABLE',
+        keyPerformanceTelemetry: {
+          totalActualSpend: fin.totalActualExpenditure || '$0.00',
+          budgetHealth: fin.budgetHealth || 'ON_TRACK',
+          cmRatio: relRanking.cmRatio || '0.0%',
+          pmCompliance: relRanking.pmCompliance || '100.0%',
+          activeBacklog: relRanking.activeBacklog || 0,
+          meanTimeToRepair_MTTR: relRanking.mttrHours || '2.4h',
+          criticalAssetsAtRisk: riskSummary.criticalHighRisk || 0
+        },
+        strategicExecutiveFindings: strategicFindings,
+        vendorSlaHighlights: topVendors,
+        immediateActionItems: [
+          'Accelerate backlog clearance on high-RPN critical equipment.',
+          'Review SLA breach penalty clauses with third-party service contractors.',
+          'Reallocate corrective maintenance labor hours toward preventative maintenance routines.'
+        ]
+      };
+    } catch (err) {
+      return { error: `Failed to compile executive audit brief: ${err.message}` };
+    }
   }
 };

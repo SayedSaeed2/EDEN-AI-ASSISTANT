@@ -15,7 +15,10 @@ RULES:
    - For Asset details: call "get_asset_details"
    - For counting SRs: call "get_service_request_count"
    - For executive metrics: call the executive tool (get_executive_cost_summary, get_reliability_metrics, etc.)
-2. When displaying lists of records, always format them as a clean Markdown table with columns: (WO Number, Description, Status, Asset, Location) rather than long repetitive blocks.
+2. When displaying lists of records or cross-site tables:
+   - Keep introductory text concise.
+   - Format tables cleanly.
+   - Provide a brief, complete 1-2 sentence executive conclusion. Never cut off mid-sentence.
 3. NEVER output code strings, Python syntax, pseudo-code, or JSON in plain text. Always execute tools directly.
 4. Language support:
    - If the user writes in Arabic, answer in Arabic.
@@ -130,8 +133,8 @@ export const chatController = {
 
     // High performance Ollama parameters
     const ollamaOptions = {
-      num_ctx: 3072,       // Ample buffer context for tool records
-      num_predict: 768,    // Enough output tokens to print complete lists without truncation
+      num_ctx: 4096,       // Generous context buffer for multi-site tables
+      num_predict: 1280,   // Ample output tokens so large 15-site tables + conclusions never cut off mid-sentence
       temperature: 0.1,    // Focused, fast deterministic responses
       top_p: 0.9,
       repeat_penalty: 1.1,
@@ -424,6 +427,24 @@ export const chatController = {
       directToolCall = {
         function: {
           name: 'get_asset_lifecycle_forecast',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    // 24. Asset Criticality Risk Matrix
+    else if (/\b(criticality|risk matrix|operational risk|vulnerable assets|rpn|single point of failure|مصفوفة المخاطر)\b/i.test(userQuery)) {
+      directToolCall = {
+        function: {
+          name: 'get_asset_criticality_risk_matrix',
+          arguments: { siteid: defaultSite }
+        }
+      };
+    }
+    // 25. Comprehensive Executive Audit Brief
+    else if (/\b(executive brief|audit brief|boardroom report|c-suite memo|audit report|executive summary report|تقرير الإدارة العليا)\b/i.test(userQuery) || (userQuery.includes('executive') && userQuery.includes('brief'))) {
+      directToolCall = {
+        function: {
+          name: 'generate_executive_audit_brief',
           arguments: { siteid: defaultSite }
         }
       };

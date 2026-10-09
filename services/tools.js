@@ -507,6 +507,38 @@ const toolRegistry = [
     },
     execute: async (args) => await maximoService.getMultiSiteReliabilityLeague(args || {})
   },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_asset_criticality_risk_matrix',
+        description: 'Plant equipment risk matrix calculating Risk Priority Number (RPN) from consequence of failure, historical repair costs, and open work order backlog.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getAssetCriticalityRiskMatrix(args || {})
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'generate_executive_audit_brief',
+        description: 'Consolidated C-Suite and Boardroom executive memo synthesizing budget health, reliability KPIs, contractor SLA performance, vulnerable assets, and immediate action items.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.generateExecutiveAuditBrief(args || {})
+  },
 
   // --- EXTERNAL KNOWLEDGE ---
   {

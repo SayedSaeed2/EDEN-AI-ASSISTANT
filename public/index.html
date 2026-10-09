@@ -36,14 +36,11 @@
     </div>
     
     <div class="header-controls">
-      <div style="display: flex; align-items: center; gap: 8px;">
+      <div class="desktop-controls" style="display: flex; align-items: center; gap: 8px;">
         <label for="site-select" style="font-size: 12px; color: #94a3b8;">Site:</label>
         <select id="site-select" class="site-select">
           <option value="">Loading sites...</option>
         </select>
-      </div>
-      
-      <div style="display: flex; align-items: center; gap: 8px;">
         <button id="btn-toggle-explorer" class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Toggle Explorer">📁 Assets</button>
         <!-- Current Authenticated User & Sign Out -->
         <div id="user-profile-badge" style="display: flex; align-items: center; gap: 6px;">
@@ -51,8 +48,32 @@
           <button id="btn-logout" onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; font-size: 11px; padding: 3px 6px; border-radius: 4px; cursor: pointer;">Exit</button>
         </div>
       </div>
+      
+      <!-- Mobile Hamburger Button -->
+      <button id="btn-burger" class="btn-burger" onclick="toggleMobileMenu()" title="Menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
   </header>
+
+  <!-- Mobile Dropdown Nav Menu -->
+  <div id="mobile-nav-drawer" class="mobile-nav-drawer">
+    <div class="mobile-nav-item">
+      <label for="site-select-mobile" style="font-size: 12px; color: #94a3b8;">Active Site:</label>
+      <select id="site-select-mobile" class="site-select" onchange="syncMobileSite(this.value)">
+        <option value="">Loading sites...</option>
+      </select>
+    </div>
+    <div class="mobile-nav-item">
+      <button class="btn-quick" style="width: 100%;" onclick="toggleSidebar(); toggleMobileMenu();">📁 Open Assets & Locations</button>
+    </div>
+    <div class="mobile-nav-item" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #334155; padding-top: 10px;">
+      <span style="font-size: 12px; color: #e2e8f0;">Signed in as: <strong id="user-display-name-mobile">Technician</strong></span>
+      <button onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #f87171; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Logout</button>
+    </div>
+  </div>
 
   <!-- Live Working Memory Banner -->
   <div class="memory-bar">
@@ -75,7 +96,9 @@
             
             <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #38bdf8; font-weight: 700; margin-top: 14px;">👔 Top Management & Executive Analytics</div>
             <div class="btn-group" style="margin-top: 8px;">
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League: All Sites (CM, PM, Backlog, MTTR, RT)</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite: Executive Audit Brief Memo</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk: Asset Criticality & Vulnerability Matrix</button>
+              <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League: All Sites</button>
               <button class="btn-quick btn-exec" onclick="sendPrompt('Provide budget variance analysis and OPEX financial health')">📊 Budget: Variance & OPEX Health</button>
               <button class="btn-quick btn-exec" onclick="sendPrompt('Provide contractor and vendor SLA compliance scorecard')">🤝 Vendors: SLA Compliance League</button>
               <button class="btn-quick btn-exec" onclick="sendPrompt('Provide asset lifecycle and CAPEX replacement renewal forecast')">🏗️ Assets: CAPEX Replacement Forecast</button>
@@ -109,7 +132,8 @@
     <!-- Right: Maximo Explorer (Sites, Assets & Locations Picker) -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="sidebar-title">Maximo Explorer</div>
+        <div class="sidebar-title">📁 Maximo Explorer</div>
+        <button class="btn-close-sidebar" onclick="toggleSidebar()" title="Close Explorer">✕</button>
       </div>
       
       <div class="sidebar-tabs">

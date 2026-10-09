@@ -20,27 +20,32 @@ async function loadContext(siteId = '') {
     console.log('[loadContext] Received sites:', currentContext.sites);
 
     const el = document.getElementById('site-select') || siteSelect;
-    if (el) {
-      const currentVal = siteId || currentContext.activeSite || (currentContext.sites?.[0]?.siteid) || 'TEST';
-      el.innerHTML = '';
+    const elMobile = document.getElementById('site-select-mobile');
+    const selects = [el, elMobile].filter(Boolean);
 
-      if (Array.isArray(currentContext.sites) && currentContext.sites.length > 0) {
-        currentContext.sites.forEach(s => {
+    if (selects.length > 0) {
+      const currentVal = siteId || currentContext.activeSite || (currentContext.sites?.[0]?.siteid) || 'TEST';
+
+      selects.forEach(selectEl => {
+        selectEl.innerHTML = '';
+        if (Array.isArray(currentContext.sites) && currentContext.sites.length > 0) {
+          currentContext.sites.forEach(s => {
+            const opt = document.createElement('option');
+            const id = typeof s === 'string' ? s : (s.siteid || s.id || '');
+            const desc = typeof s === 'string' ? s : (s.description ? `${id} — ${s.description}` : id);
+            opt.value = id;
+            opt.textContent = desc;
+            if (id === currentVal) opt.selected = true;
+            selectEl.appendChild(opt);
+          });
+          selectEl.value = currentVal;
+        } else {
           const opt = document.createElement('option');
-          const id = typeof s === 'string' ? s : (s.siteid || s.id || '');
-          const desc = typeof s === 'string' ? s : (s.description ? `${id} — ${s.description}` : id);
-          opt.value = id;
-          opt.textContent = desc;
-          if (id === currentVal) opt.selected = true;
-          el.appendChild(opt);
-        });
-        el.value = currentVal;
-      } else {
-        const opt = document.createElement('option');
-        opt.value = currentVal;
-        opt.textContent = currentVal;
-        el.appendChild(opt);
-      }
+          opt.value = currentVal;
+          opt.textContent = currentVal;
+          selectEl.appendChild(opt);
+        }
+      });
     }
 
     // Update memory chips to reflect active site
@@ -88,12 +93,17 @@ function renderSidebarItems() {
       </div>
     `;
 
-    // Click to insert into prompt
+    // Click to insert into prompt and close mobile drawer
     div.onclick = () => {
       userInput.value = activeTab === 'assets'
         ? `Create a work order for asset ${code} in department MECH with work type CM`
         : `Check work orders in location ${code}`;
       userInput.focus();
+
+      // If on mobile, dismiss the bottom drawer
+      if (window.innerWidth <= 768) {
+        toggleSidebar();
+      }
     };
 
     itemsList.appendChild(div);
@@ -811,6 +821,129 @@ function renderDashboardWidgets(tools) {
         </div>
       `;
     }
+
+    // 10. Asset Criticality & Operational Risk Priority Matrix Widget
+    else if (t.tool === 'get_asset_criticality_risk_matrix') {
+      const dist = res.riskDistribution || {};
+      const criticals = res.topCriticalVulnerableAssets || [];
+      const statusClass = res.plantRiskHealth === 'CONTROLLED_RISK' ? 'healthy' : 'critical';
+
+      const critRows = criticals.map(c => `
+        <tr>
+          <td><span class="asset-tag-badge">${escapeHtml(c.assetnum)}</span></td>
+          <td style="font-size: 11px;">${escapeHtml(c.description)}</td>
+          <td><span style="color: #f87171; font-weight: 700;">Priority ${c.priorityRating}</span></td>
+          <td style="color: #fbbf24; font-weight: 700;">${c.activeBacklog} WOs</td>
+          <td><span class="breakdown-counter" style="background: rgba(239, 68, 68, 0.2); color: #f87171;">RPN ${c.calculatedRiskScore}</span></td>
+          <td><span class="health-pill ${c.recommendation.includes('IMMEDIATE') ? 'critical' : 'warning'}" style="font-size: 9px; padding: 2px 6px;">${escapeHtml(c.recommendation.replace(/_/g, ' '))}</span></td>
+        </tr>
+      `).join('');
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>🎯 Asset Criticality & Operational Risk Matrix</span>
+              <span class="dash-site-badge">${escapeHtml(res.site || 'SITE')}</span>
+            </div>
+            <span class="health-pill ${statusClass}">${escapeHtml((res.plantRiskHealth || 'STABLE').replace(/_/g, ' '))}</span>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 8px;">
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">High-Risk Vulnerable Units</span>
+              <span class="kpi-stat-number" style="color: #f87171;">${dist.criticalHighRisk ?? 0}</span>
+              <span class="kpi-stat-sub">High Consequence + Backlog</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Moderate Risk Assets</span>
+              <span class="kpi-stat-number" style="color: #fbbf24;">${dist.moderateRisk ?? 0}</span>
+              <span class="kpi-stat-sub">Scheduled Watchlist</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Stable Assets</span>
+              <span class="kpi-stat-number" style="color: #34d399;">${dist.lowRiskStable ?? 0}</span>
+              <span class="kpi-stat-sub">Controlled Status</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <div style="font-size: 11.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">Top Vulnerable Single-Points-of-Failure:</div>
+            <table class="bad-actors-table">
+              <thead>
+                <tr>
+                  <th>Asset Tag</th>
+                  <th>Description</th>
+                  <th>Maximo Priority</th>
+                  <th>Active Backlog</th>
+                  <th>Risk Score (RPN)</th>
+                  <th>Action Required</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${critRows || '<tr><td colspan="6" style="text-align: center; color: #64748b;">No high-risk critical assets found.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // 11. C-Suite Consolidated Executive Audit Brief Widget
+    else if (t.tool === 'generate_executive_audit_brief') {
+      const tel = res.keyPerformanceTelemetry || {};
+      const findings = res.strategicExecutiveFindings || [];
+      const actions = res.immediateActionItems || [];
+      const isAttn = res.overallPlantStatus === 'ATTENTION_REQUIRED';
+
+      const findingsList = findings.map(f => `<li style="margin-bottom: 4px; font-size: 12px; color: #e2e8f0;">${escapeHtml(f)}</li>`).join('');
+      const actionList = actions.map(a => `<li style="margin-bottom: 4px; font-size: 12px; color: #38bdf8;">✓ ${escapeHtml(a)}</li>`).join('');
+
+      html += `
+        <div class="kpi-dashboard-card" style="border: 2px solid #6366f1; background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95));">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>📑 C-Suite Executive Maintenance & Reliability Brief</span>
+              <span class="dash-site-badge" style="background: #4f46e5; color: #fff;">${escapeHtml(res.site || 'SITE')}</span>
+            </div>
+            <span class="health-pill ${isAttn ? 'warning' : 'healthy'}">${escapeHtml((res.overallPlantStatus || 'STABLE').replace(/_/g, ' '))}</span>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(4, 1fr); margin-top: 8px;">
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Total OPEX Spend</span>
+              <span class="kpi-stat-number" style="color: #34d399; font-size: 15px;">${escapeHtml(tel.totalActualSpend || '$0')}</span>
+              <span class="kpi-stat-sub">${escapeHtml(tel.budgetHealth || 'ON_TRACK')}</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">CM Breakdown Ratio</span>
+              <span class="kpi-stat-number" style="color: ${parseFloat(tel.cmRatio) > 30 ? '#f87171' : '#34d399'}; font-size: 15px;">${escapeHtml(tel.cmRatio || '0%')}</span>
+              <span class="kpi-stat-sub">Target &lt; 20%</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">PM Schedule Compliance</span>
+              <span class="kpi-stat-number" style="color: #38bdf8; font-size: 15px;">${escapeHtml(tel.pmCompliance || '100%')}</span>
+              <span class="kpi-stat-sub">Target &ge; 90%</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Mean Restore Time (MTTR)</span>
+              <span class="kpi-stat-number" style="color: #fbbf24; font-size: 15px;">${escapeHtml(tel.meanTimeToRepair_MTTR || '2.4h')}</span>
+              <span class="kpi-stat-sub">Target &lt; 3.5h</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px; background: rgba(15, 23, 42, 0.6); padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+            <div style="font-size: 11.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px;">🔍 Strategic Executive Findings:</div>
+            <ul style="padding-left: 18px; margin: 0;">${findingsList}</ul>
+          </div>
+
+          <div style="margin-top: 10px; background: rgba(15, 23, 42, 0.6); padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;">
+            <div style="font-size: 11.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px;">⚡ Recommended Executive Decisions:</div>
+            <ul style="padding-left: 0; list-style: none; margin: 0;">${actionList}</ul>
+          </div>
+        </div>
+      `;
+    }
   }
 
   return html ? `<div class="dashboard-widget-container">${html}</div>` : '';
@@ -886,9 +1019,10 @@ async function checkAuth() {
     const data = await res.json();
     if (data.user) {
       const nameEl = document.getElementById('user-display-name');
-      if (nameEl) {
-        nameEl.textContent = `${data.user.displayName || data.user.username} (${data.user.role || 'user'})`;
-      }
+      const nameElMobile = document.getElementById('user-display-name-mobile');
+      const userText = `${data.user.displayName || data.user.username} (${data.user.role || 'user'})`;
+      if (nameEl) nameEl.textContent = userText;
+      if (nameElMobile) nameElMobile.textContent = userText;
     }
     return true;
   } catch (err) {
@@ -924,6 +1058,22 @@ window.toggleSidebar = function() {
   if (sidebar) {
     sidebar.classList.toggle('open');
   }
+};
+
+// Mobile Hamburger Navigation Menu Toggle
+window.toggleMobileMenu = function() {
+  const btn = document.getElementById('btn-burger');
+  const drawer = document.getElementById('mobile-nav-drawer');
+  if (btn) btn.classList.toggle('active');
+  if (drawer) drawer.classList.toggle('open');
+};
+
+// Sync Mobile Site select with Desktop Site select & reload context
+window.syncMobileSite = function(val) {
+  const desktopSelect = document.getElementById('site-select');
+  if (desktopSelect) desktopSelect.value = val;
+  loadContext(val);
+  toggleMobileMenu();
 };
 
 // Register PWA Service Worker for mobile performance & offline capabilities
