@@ -1,5 +1,6 @@
 import { maximoService } from './maximo.js';
 import { searchTavily } from './tavily.js';
+import { ragService } from './ragService.js';
 
 // The Tool Registry ties the AI schema directly to the JS execution function
 const toolRegistry = [
@@ -538,6 +539,25 @@ const toolRegistry = [
       }
     },
     execute: async (args) => await maximoService.generateExecutiveAuditBrief(args || {})
+  },
+
+  // --- TECHNICAL KNOWLEDGE BASE / RAG ---
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'search_knowledge_base',
+        description: 'Search internal technical manuals, OEM equipment guides, SOPs, safety procedures, or executive policy PDFs indexed in the system.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The maintenance question, troubleshooting topic, fault code, or policy search term.' }
+          },
+          required: ['query']
+        }
+      }
+    },
+    execute: async (args) => await ragService.search(args.query)
   },
 
   // --- EXTERNAL KNOWLEDGE ---

@@ -24,7 +24,7 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 
 ---
 
-## 🛠️ Registered Tools & Maximo Capabilities (30 Tools)
+## 🛠️ Registered Tools & Maximo Capabilities (31 Tools)
 
 ### 1. Work Orders & Maintenance Operations
 - `get_maximo_work_orders`: Query filtered work orders by status (`INPRG`, `WAPPR`, `APPR`, etc.), location, and site.
@@ -64,7 +64,12 @@ Designed for enterprise reliability, offline security, human-in-the-loop safety,
 - `get_asset_criticality_risk_matrix`: Operational risk matrix assessing high-consequence failure probability, RPN scores, and vulnerable single points of failure.
 - `generate_executive_audit_brief`: Consolidated boardroom executive memo synthesizing budget variance, reliability adherence, contractor SLA breaches, and strategic decisions.
 
-### 7. Diagnostics & Advanced OSLC
+### 7. Technical Knowledge Base (RAG) & Document QA (Tool #31)
+- `search_knowledge_base`: Semantic vector and keyword search across internal OEM equipment manuals, standard operating procedures (SOPs), HSE guidelines, and executive maintenance policy PDFs.
+- **📎 Direct PDF Upload**: Upload manuals directly from the UI or drop them into `knowledge_docs/`.
+- **📚 Explorer Knowledge Tab**: View indexed document chunks, file sizes, and sync or remove documents anytime.
+
+### 8. Diagnostics & Advanced OSLC
 - `advanced_maximo_query`: Custom OSLC REST where-clauses across `MXWO`, `MXSR`, `MXASSET`, and `MXINVENTORY`.
 - `search_web`: External search for vendor manuals and troubleshooting guides (via Tavily).
 

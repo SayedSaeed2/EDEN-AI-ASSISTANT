@@ -15,13 +15,13 @@
   <link rel="apple-touch-icon" href="/icons/icon.svg">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="/css/style.css?v=6">
+  <link rel="stylesheet" href="/css/style.css?v=30">
   <!-- Markdown Parser -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- Export Libraries: SheetJS (Excel) & jsPDF (PDF Reports) -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 
@@ -36,21 +36,21 @@
     </div>
     
     <div class="header-controls">
-      <div class="desktop-controls" style="display: flex; align-items: center; gap: 8px;">
-        <label for="site-select" style="font-size: 12px; color: #94a3b8;">Site:</label>
+      <div class="desktop-controls" style="display: flex; align-items: center; gap: 10px;">
+        <label for="site-select" style="font-size: 12px; color: #94a3b8; font-weight: 500;">Site:</label>
         <select id="site-select" class="site-select">
           <option value="">Loading sites...</option>
         </select>
-        <button id="btn-toggle-explorer" class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Toggle Explorer">📁 Assets</button>
-        <!-- Current Authenticated User & Sign Out -->
-        <div id="user-profile-badge" style="display: flex; align-items: center; gap: 6px;">
-          <span id="user-display-name" style="font-size: 11px; font-weight: 600; color: #e2e8f0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">User</span>
-          <button id="btn-logout" onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; font-size: 11px; padding: 3px 6px; border-radius: 4px; cursor: pointer;">Exit</button>
-        </div>
+        <button id="btn-new-chat" onclick="handleNewChat()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 12px; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 4px;" title="Start a fresh chat thread">
+          <span>➕</span> <span>New Chat</span>
+        </button>
+        <button id="btn-toggle-explorer" class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Toggle Explorer (Chats, Assets, Locations, Docs)">
+          <span style="font-size: 13px;">📁</span> <span>Explorer</span>
+        </button>
       </div>
       
-      <!-- Mobile Hamburger Button -->
-      <button id="btn-burger" class="btn-burger" onclick="toggleMobileMenu()" title="Menu">
+      <!-- Unified Hamburger Menu Button for Desktop & Mobile -->
+      <button id="btn-burger" class="btn-burger" onclick="toggleAppMenu()" title="System Menu & Settings">
         <span></span>
         <span></span>
         <span></span>
@@ -58,30 +58,79 @@
     </div>
   </header>
 
-  <!-- Mobile Dropdown Nav Menu -->
-  <div id="mobile-nav-drawer" class="mobile-nav-drawer">
-    <div class="mobile-nav-item">
-      <label for="site-select-mobile" style="font-size: 12px; color: #94a3b8;">Active Site:</label>
-      <select id="site-select-mobile" class="site-select" onchange="syncMobileSite(this.value)">
+  <!-- Universal Dropdown Menu (User Profile, Reset Memory, Explorer, Sign Out) -->
+  <div id="app-dropdown-menu" class="app-dropdown-menu">
+    <div class="dropdown-menu-header">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 16px;">👤</span>
+        <div>
+          <div style="font-size: 12.5px; font-weight: 700; color: #f1f5f9;" id="user-display-name">Technician</div>
+          <div style="font-size: 10.5px; color: #94a3b8;">Maximo EAM Active Session</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile-only Site Switcher -->
+    <div class="dropdown-menu-item mobile-only-item">
+      <label for="site-select-mobile" style="font-size: 11.5px; color: #94a3b8; font-weight: 600;">Active Site:</label>
+      <select id="site-select-mobile" class="site-select" style="width: 100%; margin-top: 4px;" onchange="syncMobileSite(this.value)">
         <option value="">Loading sites...</option>
       </select>
     </div>
-    <div class="mobile-nav-item">
-      <button class="btn-quick" style="width: 100%;" onclick="toggleSidebar(); toggleMobileMenu();">📁 Open Assets & Locations</button>
-    </div>
-    <div class="mobile-nav-item" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #334155; padding-top: 10px;">
-      <span style="font-size: 12px; color: #e2e8f0;">Signed in as: <strong id="user-display-name-mobile">Technician</strong></span>
-      <button onclick="handleLogout()" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #f87171; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Logout</button>
-    </div>
+
+    <div class="dropdown-menu-divider"></div>
+
+    <button class="dropdown-menu-btn" onclick="toggleSidebar(); toggleAppMenu();">
+      <span>📁 Toggle Explorer Panel</span>
+      <span style="font-size: 10px; color: #64748b;">Chats & Assets</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="clearMemory(); toggleAppMenu();">
+      <span>🧠 Clear Working Memory</span>
+      <span style="font-size: 10px; color: #64748b;">Reset Context</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="handleNewChat(); toggleAppMenu();">
+      <span>➕ Start Fresh Conversation</span>
+    </button>
+
+    <div class="dropdown-menu-divider"></div>
+    <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 10px;">📊 Executive & Site Reports</div>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo'); toggleAppMenu();">
+      <span>📑 C-Suite Executive Memo</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison'); toggleAppMenu();">
+      <span>🏆 Cross-Site Reliability League</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Provide full executive maintenance KPI dashboard summary'); toggleAppMenu();">
+      <span>📈 KPI Maintenance Dashboard</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Show overdue work orders that missed their target date'); toggleAppMenu();">
+      <span>⏰ Overdue Work Orders Alert</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock'); toggleAppMenu();">
+      <span>📦 Low Inventory & Stock Alerts</span>
+    </button>
+
+    <div class="dropdown-menu-divider"></div>
+
+    <button class="dropdown-menu-btn btn-dropdown-logout" onclick="handleLogout()">
+      <span>🚪 Sign Out / Exit</span>
+      <span style="font-size: 11px;">✕</span>
+    </button>
   </div>
 
-  <!-- Live Working Memory Banner -->
+  <!-- Live Working Memory Banner (Clean minimal chip row) -->
   <div class="memory-bar">
-    <span style="font-weight: 600; color: #e2e8f0;">🧠 Working Memory:</span>
+    <span style="font-weight: 600; color: #94a3b8;">🧠 Memory:</span>
     <div class="memory-chips" id="memory-chips">
-      <span style="color: #64748b;">No active entities yet</span>
+      <span style="color: #64748b;">No active entities</span>
     </div>
-    <button class="btn-clear-mem" onclick="clearMemory()">Reset Memory</button>
   </div>
 
   <!-- Main Split Layout -->
@@ -122,23 +171,38 @@
 
       <footer>
         <form class="input-wrap" id="chat-form">
-          <button type="button" id="voice-btn" class="btn-voice" onclick="toggleVoiceInput()" title="Voice Dictation (Arabic & English)">🎤</button>
+          <input type="file" id="doc-file-input" accept=".pdf,.txt,.md" style="display: none;" onchange="handleFileUpload(event)">
+          <button type="button" id="btn-upload-doc" class="btn-voice" onclick="document.getElementById('doc-file-input').click()" title="Upload PDF Manual / SOP / Policy">📎</button>
+          <div class="voice-controls-wrap" style="display: flex; align-items: center; gap: 4px;">
+            <button type="button" id="voice-btn" class="btn-voice" onclick="toggleVoiceInput()" title="Voice Dictation (Tap to Start / Stop)">🎤</button>
+            <select id="voice-lang-select" class="voice-lang-select" title="Recognition Language">
+              <option value="ar-EG">🇪🇬 عربي</option>
+              <option value="ar-SA">🇸🇦 عربي (خليجي)</option>
+              <option value="en-US" selected>🇺🇸 EN</option>
+            </select>
+          </div>
           <input id="user-input" type="text" placeholder="Type or speak a message for IBM Maximo (English or بالعربي)..." autocomplete="off">
           <button type="submit" id="send-btn">Send</button>
         </form>
       </footer>
     </section>
 
-    <!-- Right: Maximo Explorer (Sites, Assets & Locations Picker) -->
+    <!-- Right: Maximo Explorer (Sites, Assets, Locations & Documents Picker) -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="sidebar-title">📁 Maximo Explorer</div>
-        <button class="btn-close-sidebar" onclick="toggleSidebar()" title="Close Explorer">✕</button>
+        <div class="sidebar-title" style="cursor: pointer;" onclick="toggleSidebar()" title="Click to collapse / expand">
+          <span>📁 Maximo Explorer</span>
+        </div>
+        <button class="btn-close-sidebar" onclick="toggleSidebar()" title="Collapse Explorer panel">
+          <span style="font-size: 14px;">▶</span>
+        </button>
       </div>
       
       <div class="sidebar-tabs">
-        <button class="tab-btn active" data-tab="assets" onclick="switchTab('assets')">Assets</button>
+        <button class="tab-btn active" data-tab="chats" onclick="switchTab('chats')">💬 Chats</button>
+        <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">Assets</button>
         <button class="tab-btn" data-tab="locations" onclick="switchTab('locations')">Locations</button>
+        <button class="tab-btn" data-tab="documents" onclick="switchTab('documents')">📚 Docs (RAG)</button>
       </div>
 
       <div class="sidebar-search">
@@ -153,6 +217,6 @@
   </div>
 
   <!-- Client Application Script -->
-  <script src="/js/app.js?v=11"></script>
+  <script src="/js/app.js?v=30"></script>
 </body>
 </html>

@@ -28,12 +28,118 @@ app.use(express.static('public'));
 
 const ollama = new Ollama({ host: config.ollama.host });
 
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { ragService } from './services/ragService.js';
+
+// Setup file upload destination in knowledge_docs
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.resolve('knowledge_docs');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, file.originalname);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 30 * 1024 * 1024 } // 30MB limit per PDF
+});
+
+import { conversationService } from './services/conversationService.js';
+
 // Protected API Routes
 app.get('/api/context', requireAuthApi, (req, res) => maximoController.getContext(req, res));
 app.get('/api/memory', requireAuthApi, (req, res) => chatController.getMemory(req, res));
 app.post('/api/memory/reset', requireAuthApi, (req, res) => chatController.resetMemory(req, res));
 app.post('/api/approve-action', requireAuthApi, (req, res) => maximoController.approveAction(req, res, ollama, config.ollama.model, toolsSchema));
 app.post('/api/chat', requireAuthApi, (req, res) => chatController.handleChat(req, res, ollama, config.ollama.model));
+
+// User Conversation Management Endpoints
+app.get('/api/conversations', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const data = conversationService.listConversations(username);
+  res.json({ success: true, ...data });
+});
+
+app.get('/api/conversations/:id', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const conv = conversationService.getConversation(username, req.params.id);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  res.json({ success: true, conversation: conv });
+});
+
+app.post('/api/conversations', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const { title = 'New Conversation', site = 'TEST' } = req.body || {};
+  const newConv = conversationService.createConversation(username, title, site);
+  res.json({ success: true, conversation: newConv });
+});
+
+app.put('/api/conversations/:id/active', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const conv = conversationService.setActiveConversation(username, req.params.id);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  res.json({ success: true, conversation: conv });
+});
+
+app.delete('/api/conversations/:id', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const result = conversationService.deleteConversation(username, req.params.id);
+  res.json(result);
+});
+
+app.put('/api/conversations/:id/rename', requireAuthApi, (req, res) => {
+  const username = req.user?.username || 'admin';
+  const { title } = req.body || {};
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Title is required.' });
+  }
+  const updated = conversationService.renameConversation(username, req.params.id, title.trim());
+  if (!updated) return res.status(404).json({ error: 'Conversation not found.' });
+  res.json({ success: true, conversation: updated });
+});
+
+// Technical Knowledge Base & RAG Endpoints
+app.get('/api/docs', requireAuthApi, (req, res) => {
+  try {
+    const docs = ragService.listDocuments();
+    res.json({ success: true, count: docs.length, documents: docs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/docs/upload', requireAuthApi, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No document file provided.' });
+    const result = await ragService.indexFile(req.file.path, req.file.originalname);
+    res.json({ success: true, message: `Successfully extracted and indexed ${result.chunkCount} passages from ${result.fileName}.`, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/docs/sync', requireAuthApi, async (req, res) => {
+  try {
+    const results = await ragService.syncFolder();
+    res.json({ success: true, synced: results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/docs/:name', requireAuthApi, (req, res) => {
+  try {
+    const result = ragService.deleteDocument(req.params.name);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
 app.listen(config.port, () => {

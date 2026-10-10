@@ -1,6 +1,7 @@
 import { toolsSchema, executeTool, MUTATING_TOOLS } from '../services/tools.js';
 import { memoryService } from '../services/memory.js';
 import { redisStore } from '../services/redisStore.js';
+import { conversationService } from '../services/conversationService.js';
 
 const BASE_SYSTEM_PROMPT = `You are an expert IBM Maximo 7.6 Assistant.
 You have tools to query and create records in Maximo OSLC APIs.
@@ -15,6 +16,7 @@ RULES:
    - For Asset details: call "get_asset_details"
    - For counting SRs: call "get_service_request_count"
    - For executive metrics: call the executive tool (get_executive_cost_summary, get_reliability_metrics, etc.)
+   - For technical manuals, equipment guides, SOPs, HSE safety, or document questions: call "search_knowledge_base"
 2. When displaying lists of records or cross-site tables:
    - Keep introductory text concise.
    - Format tables cleanly.
@@ -103,7 +105,8 @@ function updateMemoryFromText(sessionId, text = '', toolResults = []) {
 
 export const chatController = {
   async handleChat(req, res, ollama, model) {
-    const { messages, sessionId = 'default-session', siteid } = req.body;
+    const { messages, sessionId = 'default-session', siteid, conversationId } = req.body;
+    const username = req.user?.username || 'admin';
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Valid messages array is required.' });
     }
@@ -724,9 +727,14 @@ export const chatController = {
       const reply = finalResponse.message?.content || 'Done.';
       updateMemoryFromText(sessionId, reply, executedToolsLog);
 
+      // Persist conversation to disk for the logged-in user
+      const fullMessages = [...messages, { role: 'assistant', content: reply, executedTools: executedToolsLog }];
+      const savedConv = conversationService.saveMessages(username, conversationId, fullMessages, executedToolsLog, siteid);
+
       return res.json({
         reply,
         executedTools: executedToolsLog,
+        conversationId: savedConv.id,
         memory: memoryService.getSession(sessionId).workingContext
       });
 

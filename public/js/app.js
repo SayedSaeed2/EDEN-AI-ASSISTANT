@@ -8,7 +8,9 @@ const sidebarSearch = document.getElementById('sidebar-search');
 
 let history = [];
 let currentContext = { sites: [], assets: [], locations: [] };
-let activeTab = 'assets';
+let activeTab = 'chats';
+let currentConversationId = null;
+let userConversations = [];
 
 // Initialize context from backend
 async function loadContext(siteId = '') {
@@ -110,13 +112,376 @@ function renderSidebarItems() {
   });
 }
 
-// Switch between Assets and Locations tabs
+// Documents cache for RAG
+let indexedDocs = [];
+
+// Switch between Chats, Assets, Locations and Documents tabs
 window.switchTab = function(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  renderSidebarItems();
+  if (tab === 'chats') {
+    renderConversationsList();
+  } else if (tab === 'documents') {
+    loadDocuments();
+  } else {
+    renderSidebarItems();
+  }
+};
+
+// Load user conversations list from server and restore active chat
+window.loadUserConversations = async function() {
+  try {
+    const res = await fetch('/api/conversations');
+    const data = await res.json();
+    userConversations = data.conversations || [];
+    currentConversationId = data.activeConversationId;
+
+    if (currentConversationId) {
+      await loadConversationThread(currentConversationId);
+    } else if (userConversations.length > 0) {
+      await loadConversationThread(userConversations[0].id);
+    }
+
+    if (activeTab === 'chats') {
+      renderConversationsList();
+    }
+  } catch (err) {
+    console.error('Failed to load user conversations:', err);
+  }
+};
+
+// Render Conversations in Sidebar
+function renderConversationsList() {
+  const query = (sidebarSearch.value || '').toLowerCase();
+  itemsList.innerHTML = '';
+
+  const headerDiv = document.createElement('div');
+  headerDiv.style.cssText = 'padding: 8px 12px; background: rgba(30, 41, 59, 0.6); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;';
+  headerDiv.innerHTML = `
+    <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">💬 Past Conversations (${userConversations.length})</span>
+    <button onclick="handleNewChat()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 10px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">➕ New Chat</button>
+  `;
+  itemsList.appendChild(headerDiv);
+
+  const filtered = userConversations.filter(c => (c.title || '').toLowerCase().includes(query));
+
+  if (filtered.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.style.cssText = 'text-align: center; color: #64748b; font-size: 12px; padding: 20px;';
+    emptyDiv.innerHTML = `
+      <p style="margin-bottom: 8px;">No conversation history yet.</p>
+      <button onclick="handleNewChat()" style="background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">➕ Start New Chat</button>
+    `;
+    itemsList.appendChild(emptyDiv);
+    return;
+  }
+
+  filtered.forEach(c => {
+    const isActive = c.id === currentConversationId;
+    const div = document.createElement('div');
+    div.className = `item-card ${isActive ? 'active-chat-card' : ''}`;
+    div.style.cssText = isActive ? 'border-color: #38bdf8; background: rgba(56, 189, 248, 0.08);' : '';
+
+    const formattedDate = c.updatedAt ? new Date(c.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+
+    div.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
+        <div class="item-code" style="color: ${isActive ? '#38bdf8' : '#e2e8f0'}; font-size: 12px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${isActive ? '🟢 ' : '💬 '}${escapeHtml(c.title || 'Untitled Chat')}
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
+          <button onclick="event.stopPropagation(); renameConversationThread('${escapeHtml(c.id)}', '${escapeHtml(c.title || '').replace(/'/g, "\\'")}')" title="Rename chat" style="background: transparent; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; padding: 0 3px;">✏️</button>
+          <button onclick="event.stopPropagation(); deleteConversationThread('${escapeHtml(c.id)}')" title="Delete chat" style="background: transparent; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; padding: 0 3px;">✕</button>
+        </div>
+      </div>
+      <div class="item-meta" style="margin-top: 6px; font-size: 10.5px; color: #94a3b8;">
+        <span>Site: ${escapeHtml(c.site || 'TEST')}</span>
+        <span>${escapeHtml(formattedDate)}</span>
+      </div>
+    `;
+
+    div.onclick = () => {
+      loadConversationThread(c.id);
+      if (window.innerWidth <= 768) toggleSidebar();
+    };
+
+    itemsList.appendChild(div);
+  });
+}
+
+// Load a specific conversation thread and render all past messages
+window.loadConversationThread = async function(convId) {
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(convId)}`);
+    const data = await res.json();
+    if (!data.conversation) return;
+
+    currentConversationId = convId;
+    const conv = data.conversation;
+
+    // Sync active site if conversation had a site
+    if (conv.site && siteSelect && siteSelect.value !== conv.site) {
+      siteSelect.value = conv.site;
+    }
+
+    // Clear current chat box and rebuild from saved messages
+    chatBox.innerHTML = '';
+    history = [];
+
+    // Always show the quick operational and executive prompt buttons at top
+    appendDefaultWelcomeMessage();
+
+    const msgs = conv.messages || [];
+    msgs.forEach(m => {
+      history.push(m);
+      appendMessage(m.content, m.role, m.executedTools);
+    });
+
+    // Set active in backend
+    fetch(`/api/conversations/${encodeURIComponent(convId)}/active`, { method: 'PUT' });
+
+    if (activeTab === 'chats') {
+      renderConversationsList();
+    }
+  } catch (err) {
+    console.error('Failed to load conversation thread:', err);
+  }
+};
+
+// Create a new fresh chat thread
+window.handleNewChat = async function() {
+  try {
+    const activeSite = siteSelect ? siteSelect.value : 'TEST';
+    const res = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New Conversation', site: activeSite })
+    });
+    const data = await res.json();
+    if (data.conversation) {
+      currentConversationId = data.conversation.id;
+      userConversations.unshift({
+        id: data.conversation.id,
+        title: data.conversation.title,
+        site: data.conversation.site,
+        createdAt: data.conversation.createdAt,
+        updatedAt: data.conversation.updatedAt,
+        messageCount: 0
+      });
+      chatBox.innerHTML = '';
+      history = [];
+      appendDefaultWelcomeMessage();
+      if (activeTab === 'chats') renderConversationsList();
+    }
+  } catch (err) {
+    console.error('Failed to create new chat:', err);
+  }
+};
+
+// Delete a conversation thread
+window.deleteConversationThread = async function(convId) {
+  if (!confirm("Are you sure you want to delete this conversation?")) return;
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(convId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    userConversations = userConversations.filter(c => c.id !== convId);
+    if (currentConversationId === convId) {
+      if (data.activeConversationId) {
+        await loadConversationThread(data.activeConversationId);
+      } else {
+        await handleNewChat();
+      }
+    } else {
+      renderConversationsList();
+    }
+  } catch (err) {
+    alert(`Failed to delete conversation: ${err.message}`);
+  }
+};
+
+// Rename a conversation thread
+window.renameConversationThread = async function(convId, oldTitle) {
+  const newTitle = prompt("Enter a new title for this conversation:", oldTitle);
+  if (!newTitle || !newTitle.trim() || newTitle.trim() === oldTitle) return;
+
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(convId)}/rename`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle.trim() })
+    });
+    const data = await res.json();
+    if (data.success) {
+      const target = userConversations.find(c => c.id === convId);
+      if (target) target.title = newTitle.trim();
+      renderConversationsList();
+    } else {
+      alert(`Failed to rename: ${data.error || 'Unknown error'}`);
+    }
+  } catch (err) {
+    alert(`Failed to rename conversation: ${err.message}`);
+  }
+};
+
+// Append standard welcome card if new chat
+function appendDefaultWelcomeMessage() {
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = `
+    <div class="bubble bubble-agent">
+      <p>Connected to <strong>IBM Maximo EAM</strong>. Select an operational task or executive analytics report below:</p>
+      
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #38bdf8; font-weight: 700; margin-top: 14px;">👔 Top Management & Executive Analytics</div>
+      <div class="btn-group" style="margin-top: 8px;">
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite: Executive Audit Brief Memo</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk: Asset Criticality & Vulnerability Matrix</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League: All Sites</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide budget variance analysis and OPEX financial health')">📊 Budget: Variance & OPEX Health</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide contractor and vendor SLA compliance scorecard')">🤝 Vendors: SLA Compliance League</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide asset lifecycle and CAPEX replacement renewal forecast')">🏗️ Assets: CAPEX Replacement Forecast</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide executive maintenance cost and spend breakdown (Labor, Material, Contractors, Tools)')">💰 Spend: Cost Breakdown</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide reliability analysis: MTTR, Proactive vs Reactive maintenance ratio, and Top Bad Actor assets')">📈 Reliability: MTTR & Bad Actors</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Analyze backlog aging distribution (<7d, 7-30d, 30-90d, >90d) and stagnant risk')">⏳ Backlog: Aging Bands</button>
+      </div>
+
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 700; margin-top: 14px;">📋 Plant Operations & Maintenance</div>
+      <div class="btn-group" style="margin-top: 8px;">
+        <button class="btn-quick" onclick="sendPrompt('Provide full executive maintenance KPI dashboard summary')">📊 KPI: Maintenance Dashboard</button>
+        <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Alerts: Overdue Work Orders</button>
+        <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Stock: Low Inventory Alerts</button>
+        <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Read: Open Work Orders</button>
+        <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ Write: New Work Order (Prompt for Dept/Type)</button>
+        <button class="btn-quick" onclick="sendPrompt('How many assets are registered in the active site?')">🏷️ Assets: Total Asset Count</button>
+      </div>
+    </div>
+  `;
+  chatBox.appendChild(row);
+}
+
+// Fetch indexed documents from server
+async function loadDocuments() {
+  itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">Loading technical documents...</div>`;
+  try {
+    const res = await fetch('/api/docs');
+    const data = await res.json();
+    indexedDocs = data.documents || [];
+    renderDocumentsList();
+  } catch (err) {
+    console.error('Failed to load docs:', err);
+    itemsList.innerHTML = `<div style="text-align: center; color: #f87171; font-size: 12px; padding: 20px;">Failed to load documents: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// Render Document list in Explorer
+function renderDocumentsList() {
+  const query = (sidebarSearch.value || '').toLowerCase();
+  itemsList.innerHTML = '';
+
+  const headerDiv = document.createElement('div');
+  headerDiv.style.cssText = 'padding: 8px 12px; background: rgba(30, 41, 59, 0.6); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;';
+  headerDiv.innerHTML = `
+    <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">📂 Knowledge Docs (${indexedDocs.length})</span>
+    <button onclick="syncFolderDocs()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 10px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">🔄 Sync Folder</button>
+  `;
+  itemsList.appendChild(headerDiv);
+
+  const filtered = indexedDocs.filter(d => d.name.toLowerCase().includes(query));
+
+  if (filtered.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.style.cssText = 'text-align: center; color: #64748b; font-size: 12px; padding: 20px;';
+    emptyDiv.innerHTML = `
+      <p style="margin-bottom: 8px;">No documents indexed yet.</p>
+      <button onclick="document.getElementById('doc-file-input').click()" style="background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">📎 Upload PDF</button>
+      <p style="font-size: 11px; color: #475569; margin-top: 8px;">or drop files into <code>knowledge_docs/</code></p>
+    `;
+    itemsList.appendChild(emptyDiv);
+    return;
+  }
+
+  filtered.forEach(doc => {
+    const div = document.createElement('div');
+    div.className = 'item-card';
+    div.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div class="item-code" style="color: #38bdf8; font-size: 13px;">📄 ${escapeHtml(doc.name)}</div>
+        <button onclick="event.stopPropagation(); deleteDocument('${escapeHtml(doc.name)}')" title="Delete document" style="background: transparent; border: none; color: #94a3b8; font-size: 12px; cursor: pointer;">✕</button>
+      </div>
+      <div class="item-meta" style="margin-top: 6px;">
+        <span>${doc.chunkCount} passages</span>
+        <span>${(doc.sizeBytes / 1024).toFixed(1)} KB</span>
+      </div>
+    `;
+
+    // Click on document to prompt agent
+    div.onclick = () => {
+      userInput.value = `Search ${doc.name} for standard operating procedures and maintenance steps`;
+      userInput.focus();
+      if (window.innerWidth <= 768) toggleSidebar();
+    };
+
+    itemsList.appendChild(div);
+  });
+}
+
+// Upload file handler
+window.handleFileUpload = async function(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  const uploadBtn = document.getElementById('btn-upload-doc');
+  if (uploadBtn) uploadBtn.textContent = '⏳';
+
+  appendMessage(`📎 Uploading & indexing document <strong>${escapeHtml(file.name)}</strong>...`, 'user');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/docs/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (data.success) {
+      appendMessage(`✅ <strong>${escapeHtml(file.name)}</strong> indexed successfully! (${data.chunkCount} passages extracted). You can now ask any technical or operational questions about this document.`, 'agent');
+      if (activeTab === 'documents') loadDocuments();
+    } else {
+      appendMessage(`⚠️ Failed to index document: ${escapeHtml(data.error || 'Unknown error')}`, 'agent');
+    }
+  } catch (err) {
+    appendMessage(`⚠️ Network error uploading document: ${escapeHtml(err.message)}`, 'agent');
+  } finally {
+    if (uploadBtn) uploadBtn.textContent = '📎';
+    event.target.value = ''; // Reset input
+  }
+};
+
+// Sync knowledge_docs/ folder
+window.syncFolderDocs = async function() {
+  itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">Scanning knowledge_docs/ folder...</div>`;
+  try {
+    const res = await fetch('/api/docs/sync', { method: 'POST' });
+    const data = await res.json();
+    loadDocuments();
+    appendMessage(`🔄 Synchronized local knowledge folder: ${data.synced?.length || 0} document(s) scanned and indexed.`, 'agent');
+  } catch (err) {
+    alert(`Failed to sync folder: ${err.message}`);
+    loadDocuments();
+  }
+};
+
+// Delete a document
+window.deleteDocument = async function(docName) {
+  if (!confirm(`Delete ${docName} from the knowledge base?`)) return;
+  try {
+    await fetch(`/api/docs/${encodeURIComponent(docName)}`, { method: 'DELETE' });
+    loadDocuments();
+  } catch (err) {
+    alert(`Failed to delete document: ${err.message}`);
+  }
 };
 
 // Handle site change
@@ -161,7 +526,8 @@ chatForm.addEventListener('submit', async (e) => {
       body: JSON.stringify({ 
         messages: history,
         sessionId: 'default-session',
-        siteid: activeSite
+        siteid: activeSite,
+        conversationId: currentConversationId
       })
     });
 
@@ -169,12 +535,16 @@ chatForm.addEventListener('submit', async (e) => {
     const data = await res.json();
     if (data.memory) renderMemoryChips(data.memory);
 
+    if (data.conversationId) {
+      currentConversationId = data.conversationId;
+    }
+
     if (data.error) {
       appendMessage("Error: " + data.error, 'agent');
     } else if (data.requiresApproval) {
       appendApprovalCard(data);
     } else {
-      history.push({ role: 'assistant', content: data.reply });
+      history.push({ role: 'assistant', content: data.reply, executedTools: data.executedTools });
       appendMessage(data.reply, 'agent', data.executedTools);
     }
   } catch (err) {
@@ -284,16 +654,26 @@ function appendMessage(text, role, tools, reasoning) {
   row.innerHTML = `<div class="bubble bubble-${role}">${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
   chatBox.appendChild(row);
 
-  // Automatically attach export action bars to all rendered data tables in agent bubble
+  // Automatically attach export action bars and responsive wrappers to all rendered data tables in agent bubble
   if (role === 'agent') {
     const bubble = row.querySelector('.bubble-agent');
     if (bubble) {
       const tables = bubble.querySelectorAll('table');
       tables.forEach((tbl, idx) => {
-        // Skip if already has an export bar
-        if (tbl.previousElementSibling && tbl.previousElementSibling.classList.contains('table-export-bar')) return;
-        const exportBar = createTableExportBar(tbl, `maximo_report_${Date.now()}_${idx + 1}`);
-        tbl.parentNode.insertBefore(exportBar, tbl);
+        // If table is inside a widget or standalone, ensure it has export bar
+        const container = tbl.closest('.responsive-table-wrapper') || tbl.parentElement;
+        if (!container.previousElementSibling || !container.previousElementSibling.classList.contains('table-export-bar')) {
+          const exportBar = createTableExportBar(tbl, `maximo_report_${Date.now()}_${idx + 1}`);
+          container.parentNode.insertBefore(exportBar, container);
+        }
+
+        // If table is not wrapped in responsive container, wrap it
+        if (!tbl.parentElement.classList.contains('responsive-table-wrapper')) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'responsive-table-wrapper';
+          tbl.parentNode.insertBefore(wrapper, tbl);
+          wrapper.appendChild(tbl);
+        }
       });
     }
   }
@@ -801,23 +1181,25 @@ function renderDashboardWidgets(tools) {
             </div>
           </div>
 
-          <table class="bad-actors-table" style="margin-top: 10px;">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Site ID</th>
-                <th>CM Ratio (%)</th>
-                <th>PM Compliance (%)</th>
-                <th>Active Backlog</th>
-                <th>MTTR (hrs)</th>
-                <th>RT Ratio (%)</th>
-                <th>Health Rating</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows || '<tr><td colspan="8" style="text-align: center; color: #64748b;">No sites evaluated.</td></tr>'}
-            </tbody>
-          </table>
+          <div class="responsive-table-wrapper" style="margin-top: 10px; max-height: 480px; overflow-y: auto;">
+            <table class="bad-actors-table" style="margin-top: 0; min-width: 680px; white-space: nowrap;">
+              <thead>
+                <tr>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">Rank</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">Site ID</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">CM Ratio (%)</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">PM Compliance (%)</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">Active Backlog</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">MTTR (hrs)</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">RT Ratio (%)</th>
+                  <th style="position: sticky; top: 0; z-index: 2; background: #090d16;">Health Rating</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows || '<tr><td colspan="8" style="text-align: center; color: #64748b;">No sites evaluated.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
     }
@@ -1052,20 +1434,21 @@ window.handleLogout = async function() {
   window.location.replace('/login.html');
 };
 
-// Mobile Sidebar Toggle
+// Toggle Explorer Sidebar (Collapsible Burger Button for Desktop & Mobile)
 window.toggleSidebar = function() {
   const sidebar = document.querySelector('.sidebar');
-  if (sidebar) {
-    sidebar.classList.toggle('open');
-  }
-};
+  const desktopBtn = document.getElementById('btn-toggle-explorer');
 
-// Mobile Hamburger Navigation Menu Toggle
-window.toggleMobileMenu = function() {
-  const btn = document.getElementById('btn-burger');
-  const drawer = document.getElementById('mobile-nav-drawer');
-  if (btn) btn.classList.toggle('active');
-  if (drawer) drawer.classList.toggle('open');
+  if (window.innerWidth <= 768) {
+    // Mobile bottom drawer
+    if (sidebar) sidebar.classList.toggle('open');
+  } else {
+    // Desktop width collapse / expand
+    if (sidebar) {
+      const isCollapsed = sidebar.classList.toggle('collapsed');
+      if (desktopBtn) desktopBtn.classList.toggle('active', !isCollapsed);
+    }
+  }
 };
 
 // Sync Mobile Site select with Desktop Site select & reload context
@@ -1088,10 +1471,13 @@ if ('serviceWorker' in navigator) {
 // Voice Dictation (Arabic & English) via HTML5 Web Speech API
 let speechRecognition = null;
 let isListening = false;
+let finalAccumulatedText = '';
+let silenceTimeout = null;
 
 window.toggleVoiceInput = function() {
   const voiceBtn = document.getElementById('voice-btn');
   const input = document.getElementById('user-input');
+  const langSelect = document.getElementById('voice-lang-select');
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -1100,56 +1486,102 @@ window.toggleVoiceInput = function() {
   }
 
   if (isListening) {
-    if (speechRecognition) speechRecognition.stop();
+    stopListeningUser();
     return;
   }
 
-  speechRecognition = new SpeechRecognition();
-  speechRecognition.continuous = false;
-  speechRecognition.interimResults = true;
-  // Support mixed Arabic/English or default to Arabic (ar-EG / ar-SA) or user's system language
-  speechRecognition.lang = navigator.language.startsWith('ar') ? 'ar-EG' : 'en-US';
-
-  speechRecognition.onstart = () => {
-    isListening = true;
-    if (voiceBtn) voiceBtn.classList.add('listening');
-    if (input) input.placeholder = "Listening... تكلم الآن (عربي / English)...";
-  };
-
-  speechRecognition.onresult = (event) => {
-    let transcript = '';
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      transcript += event.results[i][0].transcript;
-    }
-    if (input) {
-      input.value = transcript;
-    }
-  };
-
-  speechRecognition.onerror = (event) => {
-    console.warn('Speech recognition error:', event.error);
-    stopListening();
-  };
-
-  speechRecognition.onend = () => {
-    stopListening();
-    if (input && input.value.trim().length > 0) {
-      // Auto-focus input ready for send
-      input.focus();
-    }
-  };
-
-  function stopListening() {
-    isListening = false;
-    if (voiceBtn) voiceBtn.classList.remove('listening');
-    if (input) input.placeholder = "Type or speak a message for IBM Maximo (English or بالعربي)...";
-  }
+  // Preserve any text already typed in input
+  const basePrefix = input && input.value.trim() ? input.value.trim() + ' ' : '';
+  finalAccumulatedText = '';
 
   try {
+    speechRecognition = new SpeechRecognition();
+    speechRecognition.continuous = true;      // CRITICAL: Prevent premature exit on short pauses
+    speechRecognition.interimResults = true;   // Live real-time feedback
+    speechRecognition.maxAlternatives = 1;
+
+    // Use user-selected language or auto-detect
+    const selectedLang = langSelect ? langSelect.value : (navigator.language.startsWith('ar') ? 'ar-EG' : 'en-US');
+    speechRecognition.lang = selectedLang;
+
+    speechRecognition.onstart = () => {
+      isListening = true;
+      if (voiceBtn) {
+        voiceBtn.classList.add('listening');
+        voiceBtn.textContent = '⏹️'; // Clear visual toggle
+      }
+      if (input) input.placeholder = selectedLang.startsWith('ar') 
+        ? "جاري الاستماع... تحدث بطلاقة (اضغط ⏹️ للإيقاف)..." 
+        : "Listening continuously... Speak now (tap ⏹️ to stop)...";
+    };
+
+    speechRecognition.onresult = (event) => {
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const transcriptChunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalAccumulatedText += (finalAccumulatedText ? ' ' : '') + transcriptChunk.trim();
+        } else {
+          interimTranscript += transcriptChunk;
+        }
+      }
+
+      if (input) {
+        const fullLiveText = (finalAccumulatedText + ' ' + interimTranscript).trim();
+        input.value = (basePrefix + fullLiveText).trim();
+      }
+
+      // Reset comfortable 5-second silence grace period after user stops speaking
+      clearTimeout(silenceTimeout);
+      silenceTimeout = setTimeout(() => {
+        if (isListening && (finalAccumulatedText || interimTranscript)) {
+          console.log('[Voice] Auto-finishing after natural speech pause.');
+          stopListeningUser();
+        }
+      }, 5000);
+    };
+
+    speechRecognition.onerror = (event) => {
+      console.warn('Speech recognition warning/error:', event.error);
+      if (event.error === 'not-allowed') {
+        alert("Microphone permission was denied. Please allow microphone access in your browser settings.");
+        stopListeningUser();
+      } else if (event.error === 'no-speech') {
+        // Just keep listening unless user manually stops
+      } else {
+        stopListeningUser();
+      }
+    };
+
+    speechRecognition.onend = () => {
+      // If user did not manually stop and it timed out naturally, cleanly finalize
+      if (isListening) {
+        stopListeningUser();
+      }
+    };
+
     speechRecognition.start();
   } catch (err) {
     console.error('Failed to start speech recognition:', err);
-    stopListening();
+    stopListeningUser();
+  }
+
+  function stopListeningUser() {
+    isListening = false;
+    clearTimeout(silenceTimeout);
+    if (speechRecognition) {
+      try { speechRecognition.stop(); } catch (e) {}
+    }
+    if (voiceBtn) {
+      voiceBtn.classList.remove('listening');
+      voiceBtn.textContent = '🎤';
+    }
+    if (input) {
+      input.placeholder = "Type or speak a message for IBM Maximo (English or بالعربي)...";
+      if (input.value.trim().length > 0) {
+        input.focus();
+      }
+    }
   }
 };
 
@@ -1179,18 +1611,19 @@ function createTableExportBar(tableEl, baseName = 'maximo_report') {
 window.exportTableToCSV = function(tableEl, filename = 'report.csv') {
   if (!tableEl) return;
   const rows = Array.from(tableEl.querySelectorAll('tr'));
+  if (rows.length === 0) return alert('No table data to export.');
   const csvLines = [];
 
   rows.forEach(row => {
     const cells = Array.from(row.querySelectorAll('th, td'));
     const line = cells.map(c => {
-      let text = c.innerText.trim().replace(/"/g, '""');
+      let text = c.innerText.trim().replace(/\r?\n|\r/g, ' ').replace(/"/g, '""');
       return `"${text}"`;
     }).join(',');
     csvLines.push(line);
   });
 
-  const csvContent = '\uFEFF' + csvLines.join('\r\n'); // Include UTF-8 BOM for Arabic & symbols
+  const csvContent = '\uFEFF' + csvLines.join('\r\n'); // UTF-8 BOM
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1199,23 +1632,23 @@ window.exportTableToCSV = function(tableEl, filename = 'report.csv') {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 // 2. Export Table to Excel (.xlsx) using SheetJS
 window.exportTableToExcel = function(tableEl, filename = 'report.xlsx') {
   if (!tableEl) return;
-  if (typeof XLSX === 'undefined') {
-    alert("Excel library is loading, please try again in a moment.");
-    return;
+  const xlsxLib = window.XLSX;
+  if (!xlsxLib) {
+    console.warn('SheetJS not loaded, falling back to CSV export.');
+    return exportTableToCSV(tableEl, filename.replace(/\.xlsx$/i, '.csv'));
   }
 
   try {
-    const wb = XLSX.utils.table_to_book(tableEl, { sheet: "Maximo Report" });
-    XLSX.writeFile(wb, filename);
+    const wb = xlsxLib.utils.table_to_book(tableEl, { sheet: "Maximo Report", raw: true });
+    xlsxLib.writeFile(wb, filename);
   } catch (err) {
     console.error('Excel export error:', err);
-    // Fallback to CSV if SheetJS fails
     exportTableToCSV(tableEl, filename.replace(/\.xlsx$/i, '.csv'));
   }
 };
@@ -1223,14 +1656,14 @@ window.exportTableToExcel = function(tableEl, filename = 'report.xlsx') {
 // 3. Export Table to Formatted PDF using jsPDF & AutoTable
 window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report', filename = 'report.pdf') {
   if (!tableEl) return;
-  const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) {
-    alert("PDF library is loading, please try again in a moment.");
-    return;
+  const jsPDFClass = window.jspdf ? window.jspdf.jsPDF : window.jsPDF;
+  if (!jsPDFClass) {
+    console.warn('jsPDF not loaded, falling back to Excel/CSV.');
+    return exportTableToExcel(tableEl, filename.replace(/\.pdf$/i, '.xlsx'));
   }
 
   try {
-    const doc = new jsPDF({
+    const doc = new jsPDFClass({
       orientation: 'landscape',
       unit: 'pt',
       format: 'a4'
@@ -1239,55 +1672,79 @@ window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report
     const activeSite = document.getElementById('site-select')?.value || 'TEST';
 
     // Header Branding
-    doc.setFillColor(3, 7, 18); // Dark Navy background header
-    doc.rect(0, 0, doc.internal.pageSize.width, 50, 'F');
+    doc.setFillColor(15, 23, 42); // Navy Dark
+    doc.rect(0, 0, doc.internal.pageSize.width, 45, 'F');
     
-    doc.setFontSize(16);
-    doc.setTextColor(56, 189, 248); // Sky blue text
-    doc.text('IBM Maximo Asset Management — AI Assistant', 30, 30);
+    doc.setFontSize(14);
+    doc.setTextColor(56, 189, 248);
+    doc.text('IBM Maximo Asset Management — AI Assistant', 24, 28);
 
-    doc.setFontSize(10);
-    doc.setTextColor(148, 163, 184); // Slate grey
-    doc.text(`Report: ${reportTitle}  |  Site: ${activeSite}  |  Generated: ${new Date().toLocaleString()}`, 30, 68);
+    doc.setFontSize(9.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Report: ${reportTitle}  |  Site: ${activeSite}  |  Generated: ${new Date().toLocaleString()}`, 24, 62);
 
-    // AutoTable render
-    doc.autoTable({
-      html: tableEl,
-      startY: 85,
-      theme: 'grid',
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [56, 189, 248],
-        fontStyle: 'bold',
-        fontSize: 10
-      },
-      styles: {
-        fontSize: 9,
-        cellPadding: 6,
-        overflow: 'linebreak'
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252]
-      },
-      margin: { left: 30, right: 30 }
-    });
-
-    // Save PDF
-    doc.save(filename);
+    // AutoTable render with fallback
+    if (typeof doc.autoTable === 'function') {
+      doc.autoTable({
+        html: tableEl,
+        startY: 75,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [56, 189, 248],
+          fontStyle: 'bold',
+          fontSize: 9
+        },
+        styles: {
+          fontSize: 8.5,
+          cellPadding: 5,
+          overflow: 'linebreak'
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252]
+        },
+        margin: { left: 24, right: 24 }
+      });
+      doc.save(filename);
+    } else {
+      exportTableToExcel(tableEl, filename.replace(/\.pdf$/i, '.xlsx'));
+    }
   } catch (err) {
     console.error('PDF export error:', err);
-    alert('Failed to generate PDF. Falling back to Excel.');
     exportTableToExcel(tableEl, filename.replace(/\.pdf$/i, '.xlsx'));
   }
 };
+
+// Toggle Universal Application Dropdown Menu (Burger Menu)
+window.toggleAppMenu = function() {
+  const menu = document.getElementById('app-dropdown-menu');
+  const burger = document.getElementById('btn-burger');
+  if (!menu) return;
+  menu.classList.toggle('open');
+  if (burger) burger.classList.toggle('active');
+};
+
+// Close dropdown menu when clicking anywhere outside
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('app-dropdown-menu');
+  const burger = document.getElementById('btn-burger');
+  if (menu && menu.classList.contains('open')) {
+    if (!menu.contains(e.target) && !burger.contains(e.target)) {
+      menu.classList.remove('open');
+      if (burger) burger.classList.remove('active');
+    }
+  }
+});
 
 // Initial load
 (async () => {
   const isAuthed = await checkAuth();
   if (isAuthed) {
-    loadContext();
+    await loadContext();
+    await loadUserConversations();
   }
 })();
+
 
 
 

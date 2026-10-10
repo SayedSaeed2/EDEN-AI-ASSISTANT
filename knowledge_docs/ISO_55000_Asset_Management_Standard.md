@@ -1,0 +1,51 @@
+# ISO 55000:2014 — Asset Management Framework & Guidelines
+
+## 1. Executive Overview & Scope
+ISO 55000 provides the international principles, terminology, and framework for asset management systems across industrial, commercial, and utility infrastructure. It enables organizations to realize sustained value from physical assets while balancing financial costs, operational risks, and performance.
+
+### Key Principles:
+1. **Value**: Assets exist to provide value to the organization and its stakeholders. Value realization requires a structured balance of OPEX, CAPEX, and risk.
+2. **Alignment (Line of Sight)**: Translation of organizational strategic objectives into technical, lifecycle, and operational maintenance plans.
+3. **Leadership**: Top management commitment to maintenance policy, competency development, and continuous reliability improvement.
+4. **Assurance**: Demonstration of asset integrity through systematic audits, condition monitoring, and risk management.
+
+---
+
+## 2. ISO 55001 Core Requirements Summary
+
+### Clause 4: Context of the Organization
+- Identification of internal and external stakeholder needs (regulators, shareholders, maintenance teams).
+- Establishment of the **Strategic Asset Management Plan (SAMP)** documenting 3-5 year reliability targets.
+
+### Clause 6: Planning & Risk Assessment
+- **Asset Criticality Classification**:
+  - **Category A (Critical)**: High safety, environmental, or operational downtime consequence. Requires Predictive (PdM) and RCM-based maintenance.
+  - **Category B (Essential)**: Moderate operational impact. Maintained via scheduled Preventative Maintenance (PM).
+  - **Category C (Standard)**: Low impact, redundant assets. Eligible for Run-to-Failure (RTF) corrective maintenance.
+- **Risk Priority Number (RPN)**:
+  $$\text{RPN} = \text{Probability of Failure} \times \text{Consequence Severity}$$
+
+### Clause 7: Support & Technical Documentation
+- Requirement for standardized maintenance job plans, technician competence records, and verified calibration logs.
+- Digital Enterprise Asset Management (EAM/CMMS) integration for complete work audit trails.
+
+### Clause 8: Operational Planning and Control
+- Management of Change (MOC) procedures for equipment modifications.
+- Contractor and outsourced service level agreements (SLAs) must enforce safety and MTBF compliance.
+
+### Clause 9: Performance Evaluation & Metrics
+- **Mean Time Between Failures (MTBF)**: Target $> 720$ hours for critical rotating assets.
+- **Mean Time To Repair (MTTR)**: Target $< 3.5$ hours for primary utility systems.
+- **Planned Maintenance Percentage (PMP)**: Target $\ge 80\%$ proactive vs reactive.
+- **Backlog Aging**: Corrective work orders older than 90 days must not exceed 5% of total active backlog.
+
+### Clause 10: Continual Improvement
+- Mandatory Root Cause Failure Analysis (RCFA) for every unplanned breakdown causing $> 4$ hours plant downtime.
+- Annual audit of the SAMP against life-cycle cost actuals vs budget variance.
+
+---
+
+## 3. Recommended Maximo Implementation Guidelines
+1. Configure `PRIORITY` (1-5) on all Maximo assets according to the ISO 55000 Category matrix.
+2. Maintain `WORKTYPE` distribution: `PM` (Preventive), `PdM` (Predictive), `EM` (Emergency Breakdown).
+3. Ensure all safety-critical assets have linked `SAFETYPLAN` records and Job Plans with approved hazard controls.
