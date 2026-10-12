@@ -3,18 +3,28 @@
     "username": "admin",
     "password": "admin123",
     "displayName": "System Administrator",
-    "role": "admin"
+    "role": "admin",
+    "allowedSites": ["*"]
   },
   {
     "username": "manager",
     "password": "manager123",
     "displayName": "Executive Manager",
-    "role": "executive"
+    "role": "executive",
+    "allowedSites": ["*"]
   },
   {
     "username": "engineer",
     "password": "engineer123",
     "displayName": "Maintenance Engineer",
-    "role": "engineer"
+    "role": "engineer",
+    "allowedSites": ["TEST"]
+  },
+  {
+    "username": "tech_test",
+    "password": "password123",
+    "displayName": "TEST Plant Technician",
+    "role": "technician",
+    "allowedSites": ["TEST"]
   }
 ]

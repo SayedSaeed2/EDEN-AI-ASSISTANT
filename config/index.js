@@ -11,7 +11,7 @@ export const config = {
     apiKey: process.env.TAVILY_API_KEY
   },
   maximo: {
-    baseUrl: process.env.MAXIMO_BASE_URL || 'http://172.16.128.18:9070/maximo',
+    baseUrl: process.env.MAXIMO_BASE_URL || 'https://haedmaxed.eden-fm.com/maximo',
     apiKey: process.env.MAXIMO_API_KEY,
     defaultSite: process.env.MAXIMO_DEFAULT_SITE || 'TEST'
   }

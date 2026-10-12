@@ -3,13 +3,21 @@ import { memoryService } from '../services/memory.js';
 import { redisStore } from '../services/redisStore.js';
 import { conversationService } from '../services/conversationService.js';
 
-const BASE_SYSTEM_PROMPT = `You are an expert IBM Maximo 7.6 Assistant.
-You have tools to query and create records in Maximo OSLC APIs.
+const BASE_SYSTEM_PROMPT = `You are the Eden FM Intelligent Operations & Asset Assistant, representing Eden Facility Management (a subsidiary of Hassan Allam Holding) operating since 2011 across Egypt and the MEA region.
+You interface directly with Eden's IBM Maximo EAM system to empower Facility Managers, Engineers, and C-Suite leadership.
+
+CORE IDENTITY & EDEN VALUES:
+- Organization: Eden Facility Management (Subsidiary of Hassan Allam Holding).
+- Operating Model: 90% Self-Executed Operations (in-house technical manpower across MEP, HVAC, Civil, HSE, and Energy Management).
+- Core Values: Integrity, Respect, Reliability, Quality, and Discipline.
+- Mission: Managing, protecting, and maximizing property and infrastructure asset value and energy efficiency.
 
 RULES:
 1. Always invoke the relevant tool from your tools list:
+   - For PPM Schedules & Forecasts: call "get_ppm_forecast"
    - For creating Work Orders: call "create_maximo_work_order"
    - For listing Work Orders: call "get_maximo_work_orders" (supports status e.g. INPRG, WAPPR, APPR, location, siteid)
+   - For unplanned / corrective / emergency work orders: call "get_unplanned_work_orders" (or "get_unplanned_work_orders_summary" for cross-site counts)
    - For counting Work Orders: call "get_work_order_count"
    - For counting Assets (e.g. "how many assets"): call "get_asset_count"
    - For listing Assets: call "get_assets"
@@ -18,12 +26,18 @@ RULES:
    - For executive metrics: call the executive tool (get_executive_cost_summary, get_reliability_metrics, etc.)
    - For technical manuals, equipment guides, SOPs, HSE safety, or document questions: call "search_knowledge_base"
 2. When displaying lists of records or cross-site tables:
-   - Keep introductory text concise.
-   - Format tables cleanly.
+   - When presenting lists of Work Orders or multi-site data, format them as a standard GitHub Flavored Markdown table.
+   - You MUST put each table row on its own line separated by a real newline character (\n). Never concatenate rows on a single line with ||.
+   - Example table format:
+| WONUM | Description | Type | Status | Asset | Location | Site | Report Date |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| WO-101 | Chiller Annual Overhaul | CM | WAPPR | CHILLER-01 | ROOF-A | ARAMEX | 2025-04-15 |
+   - When asked for Work Orders across all sites or a summary, call "get_work_order_site_summary" (or "get_unplanned_work_orders_summary" for unplanned) to display the site count summary table.
+   - Keep introductory text concise and aligned with Eden professional standards.
    - Provide a brief, complete 1-2 sentence executive conclusion. Never cut off mid-sentence.
 3. NEVER output code strings, Python syntax, pseudo-code, or JSON in plain text. Always execute tools directly.
 4. Language support:
-   - If the user writes in Arabic, answer in Arabic.
+   - If the user writes in Arabic, answer in professional Arabic (مساعد إيدن الذكي لإدارة المرافق والصيانة).
    - If the user writes in English, answer in English.`;
 
 // Helper: parse <thought> tags from response
@@ -105,23 +119,42 @@ function updateMemoryFromText(sessionId, text = '', toolResults = []) {
 
 export const chatController = {
   async handleChat(req, res, ollama, model) {
-    const { messages, sessionId = 'default-session', siteid, conversationId } = req.body;
+    const { messages, sessionId = 'default-session', siteid, conversationId } = req.body || {};
     const username = req.user?.username || 'admin';
+    const allowedSites = req.user?.allowedSites || ['*'];
+    const isUniversal = allowedSites.includes('*') || allowedSites.includes('ALL');
+
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Valid messages array is required.' });
     }
 
-    // Set site in memory if provided
-    if (siteid) {
-      memoryService.updateWorkingContext(sessionId, { activeSite: siteid });
+    // Determine target site and enforce user site authorization
+    let targetSite = (siteid || '').toUpperCase();
+    if (!isUniversal) {
+      const allowedUpper = allowedSites.map(s => s.toUpperCase());
+      if (targetSite && !allowedUpper.includes(targetSite)) {
+        return res.json({
+          reply: `⛔ **Access Denied**: You do not have permission to view or manage site **${targetSite}**. Your authorized site(s): \`${allowedSites.join(', ')}\`.`,
+          executedTools: [],
+          memory: memoryService.getSession(sessionId).workingContext
+        });
+      }
+      if (!targetSite) {
+        targetSite = allowedUpper[0];
+      }
+    } else {
+      if (!targetSite) targetSite = 'TEST';
     }
+
+    // Set authorized site in memory
+    memoryService.updateWorkingContext(sessionId, { activeSite: targetSite, allowedSites });
 
     const lastUserMessage = messages[messages.length - 1]?.content || '';
     updateMemoryFromText(sessionId, lastUserMessage);
 
     // Formulate dynamic system prompt with session memory
     const memoryContextBlock = memoryService.formatMemoryPrompt(sessionId);
-    const systemPromptWithMemory = `${BASE_SYSTEM_PROMPT}\n\nCURRENT WORKING MEMORY (Active Context):\n${memoryContextBlock}`;
+    const systemPromptWithMemory = `${BASE_SYSTEM_PROMPT}\n\nCURRENT WORKING MEMORY (Active Context):\n${memoryContextBlock}\n\nUSER AUTHORIZATION RESTRICTIONS:\nUser '${username}' is authorized for sites: [${allowedSites.join(', ')}]. Never query or disclose data for any other site.`;
 
     // Sliding window: keep the last 10 messages for rich conversational continuity without token bloat
     const recentMessages = messages.length > 10 ? messages.slice(-10) : messages;
@@ -148,10 +181,38 @@ export const chatController = {
     const userQuery = lastUserMessage.trim().toLowerCase();
     let directToolCall = null;
     const activeCtx = memoryService.getSession(sessionId)?.workingContext || {};
-    const defaultSite = activeCtx.activeSite || siteid || 'TEST';
+    const defaultSite = targetSite;
 
+    // 0. Machine Card (Asset Passport & History)
+    if (/\b(machine card|asset card|asset passport|بطاقة\s*الماكينة|بطاقة\s*المعدة|كارت\s*المعدة|كارت\s*الماكينة|تاريخ\s*المعدة|تاريخ\s*الماكينة)\b/i.test(userQuery) || (userQuery.includes('card') && (userQuery.includes('asset') || userQuery.includes('machine')))) {
+      // 1. Explicit asset mention after keyword (e.g. "asset ASSET124", "machine PUMP-101", "for ASSET124")
+      const explicitMatch = lastUserMessage.match(/\b(?:asset|machine|for|المعدة|الماكينة|أصل|اصل)\s+([A-Z0-9_\-]+)\b/i);
+      // 2. Fallback to asset pattern matching, strictly excluding query words like SHOW, GIVE, CARD, MACHINE
+      const patternMatch = lastUserMessage.match(/\b(ASSET\d+|PUMP-?\d+|CHILLER-?\d+|COMP-?\d+|GEN-?\d+|AHU-?\d+|HVAC-?\d+|TEST_STATUS)\b/i);
+      
+      let targetAsset = null;
+      if (explicitMatch && !['CARD', 'PASSPORT', 'HISTORY', 'DETAILS'].includes(explicitMatch[1].toUpperCase())) {
+        targetAsset = explicitMatch[1].toUpperCase();
+      } else if (patternMatch) {
+        targetAsset = patternMatch[0].toUpperCase();
+      } else {
+        targetAsset = activeCtx.lastMentionedAsset || 'ASSET124';
+      }
+
+      const siteMatch = lastUserMessage.match(/\b(?:in|at|for)\s+site\s+([A-Z0-9_\-]+)\b/i);
+
+      directToolCall = {
+        function: {
+          name: 'get_machine_card',
+          arguments: {
+            assetnum: targetAsset,
+            siteid: siteMatch ? siteMatch[1].toUpperCase() : defaultSite
+          }
+        }
+      };
+    }
     // 1. Asset Count
-    if (/\b(how many|count of|total count|number of)\s+assets\b/i.test(userQuery)) {
+    else if (/\b(how many|count of|total count|number of)\s+assets\b/i.test(userQuery)) {
       directToolCall = {
         function: {
           name: 'get_asset_count',
@@ -187,10 +248,73 @@ export const chatController = {
         }
       };
     }
-    // 4. Query / List Work Orders
-    else if (/\b(check|show|list|get|find|view|give)\s*(me\s+)?(all\s+)?([a-z\s-]*work\s*orders?|wo\b)/i.test(userQuery)) {
+    // 3.5. Preventive Maintenance (PPM) Forecast Schedule (based on FORECASTDATE / NEXTDATE in PM application)
+    else if (/\b(ppm|preventive|pm\s+application|forecast\s*date|forecastdate|next\s*date|جدول\s*الصيانة\s*الوقائية|صيانة\s*وقائية|وقائي)\b/i.test(userQuery) && !/\b(bad\s*actors|kpi|executive)\b/i.test(userQuery)) {
+      const siteMatch = lastUserMessage.match(/\b(?:site|in\s+site|at\s+site|for\s+site)\s+([A-Z0-9_\-]+)\b/i);
+      const assetMatch = lastUserMessage.match(/\b(?:asset|assetnum|معدة|ماكينة)\s*[:#]?\s*([A-Z0-9_\-]+)\b/i);
+
+      let targetSite = defaultSite;
+      if (siteMatch) {
+        const candidate = siteMatch[1].toUpperCase();
+        if (!['ACTIVE', 'PPM', 'PM', 'SITE', 'DATE', 'FORECAST', 'ALL'].includes(candidate)) {
+          targetSite = candidate;
+        }
+      }
+
+      directToolCall = {
+        function: {
+          name: 'get_ppm_forecast',
+          arguments: {
+            siteid: targetSite,
+            status: 'ACTIVE',
+            ...(assetMatch && { assetnum: assetMatch[1].toUpperCase() })
+          }
+        }
+      };
+    }
+    // 4. Unplanned / Corrective / Emergency Work Orders (CM & EM)
+    else if (/\b(unplanned|corrective|emergency|reactive|غير\s*مخططة|طارئة|تصحيحية|اعطال|أعطال)\s*(work\s*orders?|wo\b|أوامر\s*شغل|اوامر\s*شغل)?/i.test(userQuery)) {
+      const siteMatch = lastUserMessage.match(/\b(?:in|at|for)\s+site\s+([A-Z0-9_\-]+)\b/i);
+      const isAllSites = /\b(all\s+sites|across\s+sites|every\s+site|cross[- ]?site|كل\s+المواقع|جميع\s+المواقع)\b/i.test(userQuery);
+      const isSummary = /\b(summary|table|count|number\s+of|numbers|ملخص|جدول|كام|كم\s+عدد)\b/i.test(userQuery);
+
+      let statusValue = null;
+      if (/in[-_\s]?prog(ress)?/i.test(userQuery) || /\bINPRG\b/i.test(lastUserMessage)) statusValue = 'INPRG';
+      else if (/\b(wappr|waiting|open)\b/i.test(userQuery)) statusValue = 'WAPPR';
+      else if (/\bappr(oved)?\b/i.test(userQuery)) statusValue = 'APPR';
+      else if (/\bcomp(leted)?\b/i.test(userQuery)) statusValue = 'COMP';
+      else if (/\bclose(d)?\b/i.test(userQuery)) statusValue = 'CLOSE';
+
+      if (isAllSites || isSummary) {
+        directToolCall = {
+          function: {
+            name: 'get_unplanned_work_orders_summary',
+            arguments: {
+              ...(statusValue && { status: statusValue }),
+              siteid: siteMatch ? siteMatch[1].toUpperCase() : (isAllSites ? 'ALL' : defaultSite)
+            }
+          }
+        };
+      } else {
+        directToolCall = {
+          function: {
+            name: 'get_unplanned_work_orders',
+            arguments: {
+              siteid: siteMatch ? siteMatch[1].toUpperCase() : defaultSite,
+              ...(statusValue && { status: statusValue }),
+              all_sites: isAllSites,
+              limit: 15
+            }
+          }
+        };
+      }
+    }
+    // 5. Query / List General Work Orders or Work Order Site Summary
+    else if (/\b(check|show|list|get|find|view|give)\s*(me\s+)?(all\s+)?([a-z\s-]*work\s*orders?|wo\b)/i.test(userQuery) || /\bwork\s*orders?\s*(summary|count|table|by\s*site|across\s*all\s*sites)\b/i.test(userQuery)) {
       const locMatch = lastUserMessage.match(/\b(?:in|at|for)\s+location\s+([A-Z0-9_\-]+)\b/i);
       const siteMatch = lastUserMessage.match(/\b(?:in|at|for)\s+site\s+([A-Z0-9_\-]+)\b/i);
+      const isAllSites = /\b(all\s+sites|across\s+sites|every\s+site|cross[- ]?site|كل\s+المواقع)\b/i.test(userQuery);
+      const isSummary = /\b(summary|table|count|ملخص|جدول)\b/i.test(userQuery);
       
       let statusValue = null;
       if (/in[-_\s]?prog(ress)?/i.test(userQuery) || /\bINPRG\b/i.test(lastUserMessage)) statusValue = 'INPRG';
@@ -199,17 +323,34 @@ export const chatController = {
       else if (/\bcomp(leted)?\b/i.test(userQuery)) statusValue = 'COMP';
       else if (/\bclose(d)?\b/i.test(userQuery)) statusValue = 'CLOSE';
 
-      directToolCall = {
-        function: {
-          name: 'get_maximo_work_orders',
-          arguments: {
-            siteid: siteMatch ? siteMatch[1].toUpperCase() : defaultSite,
-            ...(locMatch && { location: locMatch[1].toUpperCase() }),
-            ...(statusValue && { status: statusValue }),
-            limit: 10
+      if (isAllSites || isSummary) {
+        // Return structured summary table grouped by site (all sites if user requested summary across sites or did not specify a single site)
+        const summaryTargetSite = siteMatch ? siteMatch[1].toUpperCase() : (isAllSites ? 'ALL' : (isSummary ? 'ALL' : defaultSite));
+
+        directToolCall = {
+          function: {
+            name: 'get_work_order_site_summary',
+            arguments: {
+              ...(statusValue && { status: statusValue }),
+              siteid: summaryTargetSite
+            }
           }
-        }
-      };
+        };
+      } else {
+        // Query individual work order records with markdown table representation
+        directToolCall = {
+          function: {
+            name: 'get_maximo_work_orders',
+            arguments: {
+              siteid: siteMatch ? siteMatch[1].toUpperCase() : defaultSite,
+              ...(locMatch && { location: locMatch[1].toUpperCase() }),
+              ...(statusValue && { status: statusValue }),
+              all_sites: isAllSites,
+              limit: 15
+            }
+          }
+        };
+      }
     }
     // 5. Create Work Order
     else if (/\b(create|open|log|new)\s+(a\s+)?(work order|wo)\b/i.test(userQuery)) {
@@ -456,20 +597,36 @@ export const chatController = {
     else if (/(اوامر\s*الشغل|أوامر\s*الشغل|اوامر\s*العمل|أوامر\s*العمل|وردرات)/i.test(userQuery)) {
       let statusValue = null;
       if (/(تحت\s*التنفيذ|شغالة|قيد\s*العمل)/i.test(userQuery)) statusValue = 'INPRG';
-      else if (/(معلقة|مفتوحة|في\s*الانتظار|تحت\s*الاعتماد)/i.test(userQuery)) statusValue = 'WAPPR';
-      else if (/(معتمدة|موافقة)/i.test(userQuery)) statusValue = 'APPR';
-      else if (/(منتهية|مغلقة|مكتملة)/i.test(userQuery)) statusValue = 'COMP';
+      else if (/(معلقة|مفتوحة|في\s*الانتظار|تحت\s*الاعتماد|wappr)/i.test(userQuery)) statusValue = 'WAPPR';
+      else if (/(معتمدة|موافقة|appr)/i.test(userQuery)) statusValue = 'APPR';
+      else if (/(منتهية|مغلقة|مكتملة|comp)/i.test(userQuery)) statusValue = 'COMP';
 
-      directToolCall = {
-        function: {
-          name: 'get_maximo_work_orders',
-          arguments: {
-            siteid: defaultSite,
-            ...(statusValue && { status: statusValue }),
-            limit: 10
+      const isAllSites = /(كل\s*المواقع|جميع\s*المواقع|بين\s*المواقع)/i.test(userQuery);
+      const isSummary = /(ملخص|جدول|احصائية|إحصائية|كم\s*عدد|كام\s*عدد)/i.test(userQuery);
+
+      if (isAllSites || isSummary) {
+        directToolCall = {
+          function: {
+            name: 'get_work_order_site_summary',
+            arguments: {
+              ...(statusValue && { status: statusValue }),
+              siteid: isAllSites ? 'ALL' : defaultSite
+            }
           }
-        }
-      };
+        };
+      } else {
+        directToolCall = {
+          function: {
+            name: 'get_maximo_work_orders',
+            arguments: {
+              siteid: defaultSite,
+              ...(statusValue && { status: statusValue }),
+              all_sites: isAllSites,
+              limit: 15
+            }
+          }
+        };
+      }
     }
     else if (/(كم\s*عدد\s*الاصول|عدد\s*الأصول|كم\s*أصل|كام\s*اصل)/i.test(userQuery)) {
       directToolCall = {
@@ -712,19 +869,118 @@ export const chatController = {
 
           const toolResult = await executeTool(toolName, toolArgs);
           executedToolsLog.push({ tool: toolName, arguments: toolArgs, result: toolResult });
-          conversation.push({ role: 'tool', content: JSON.stringify(toolResult) });
+          
+          let toolContent = JSON.stringify(toolResult);
+          if (toolName === 'get_maximo_work_orders' && Array.isArray(toolResult)) {
+            toolContent = `TOOL_RESULT: Returned ${toolResult.length} work orders. Format ALL columns in your markdown table: WONUM, Description, Status, Asset, Location, Site, Report Date.\n` + JSON.stringify(toolResult);
+          }
+          conversation.push({ role: 'tool', content: toolContent });
         }
       }
 
       // Send final prompt with tool results back to Ollama for the final natural language answer
-      const finalResponse = await ollama.chat({
-        model,
-        messages: conversation,
-        keep_alive: -1,
-        options: ollamaOptions
-      });
+      let reply = '';
+      
+      // Check if we executed get_maximo_work_orders, get_unplanned_work_orders, get_machine_card, or summaries:
+      // Generate clean, high-precision deterministic markdown table with ALL columns
+      const ppmForecastLog = executedToolsLog.find(t => t.tool === 'get_ppm_forecast' && t.result?.cardType === 'PPM_FORECAST_SCHEDULE');
+      const machineCardLog = executedToolsLog.find(t => t.tool === 'get_machine_card' && t.result?.cardType === 'MACHINE_PASSPORT_CARD');
+      const woToolLog = executedToolsLog.find(t => (t.tool === 'get_maximo_work_orders' || t.tool === 'get_unplanned_work_orders') && Array.isArray(t.result));
+      const woSummaryLog = executedToolsLog.find(t => t.tool === 'get_work_order_site_summary' && t.result?.summaryBySite);
+      const unplannedSummaryLog = executedToolsLog.find(t => t.tool === 'get_unplanned_work_orders_summary' && t.result?.summaryBySite);
 
-      const reply = finalResponse.message?.content || 'Done.';
+      if (ppmForecastLog) {
+        const data = ppmForecastLog.result;
+        let ppmMd = `### 🗓️ Preventive Maintenance (PPM) Forecast Schedule — Site \`${data.site}\`\n\n`;
+        ppmMd += `> **Filter Status:** \`${data.statusFilter}\` | **Asset Filter:** \`${data.assetFilter}\` | **Total Scheduled PPM:** **${data.totalPpmFound}** | **Source:** \`${data.usedEndpoint || 'PM Application'}\`\n\n`;
+
+        if (data.records && data.records.length > 0) {
+          ppmMd += `| PM Number | Description | Forecast / Next Date | Asset Tag | Location | Frequency | Priority |\n`;
+          ppmMd += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+          data.records.forEach(r => {
+            ppmMd += `| **${r.pmnum}** | ${r.description} | **\`${r.forecastdate}\`** | ${r.assetnum} | ${r.location} | \`${r.frequency}\` | ${r.priority} |\n`;
+          });
+          ppmMd += `\n*PPM records are sorted chronologically by estimated forecast date (\`FORECASTDATE / NEXTDATE\`).*\n`;
+        } else {
+          ppmMd += `*No Preventive Maintenance (PPM) forecast records found matching the specified parameters.*\n`;
+        }
+        reply = ppmMd;
+      } else if (machineCardLog) {
+        const mc = machineCardLog.result;
+        let cardMd = `<div class="machine-passport-card" data-asset="${mc.assetnum}">\n\n`;
+        cardMd += `## 🏷️ Machine Passport Card: ${mc.assetnum} — ${mc.description}\n\n`;
+        cardMd += `> **Operational Status:** \`${mc.status}\` | **Site:** \`${mc.siteid}\` | **Location:** \`${mc.location}\` | **Health Rating:** **${mc.reliabilityMetrics.healthStatus}**\n\n`;
+
+        cardMd += `### ⚙️ Technical Specifications & Asset Info\n`;
+        cardMd += `| Attribute | Details | Attribute | Details |\n`;
+        cardMd += `| :--- | :--- | :--- | :--- |\n`;
+        cardMd += `| **Manufacturer** | ${mc.manufacturer} | **Model Number** | ${mc.modelnum} |\n`;
+        cardMd += `| **Serial Number** | ${mc.serialnum} | **Vendor** | ${mc.vendor} |\n`;
+        cardMd += `| **Installation Date** | ${mc.installdate} | **Asset Priority** | ${mc.priority} |\n`;
+        cardMd += `| **Failure Class Code** | ${mc.failurecode} | **Lifecycle State** | ${mc.financials.replacementRecommendation} |\n\n`;
+
+        cardMd += `### 📊 Reliability & Maintenance Performance (Historical)\n`;
+        cardMd += `| Metric | Value | Metric | Value |\n`;
+        cardMd += `| :--- | :--- | :--- | :--- |\n`;
+        cardMd += `| **Total Lifetime Work Orders** | **${mc.reliabilityMetrics.totalWorkOrders}** | **Mean Time to Repair (MTTR)** | **${mc.reliabilityMetrics.mttr}** |\n`;
+        cardMd += `| **Corrective Maintenance (CM)** | ${mc.reliabilityMetrics.correctiveMaintenanceCount} | **Preventive Maintenance (PM)** | ${mc.reliabilityMetrics.preventiveMaintenanceCount} |\n`;
+        cardMd += `| **Emergency Breakdowns (EM)** | ${mc.reliabilityMetrics.emergencyBreakdownCount} | **Active Backlog Orders** | ${mc.reliabilityMetrics.activeBacklogOrders} |\n`;
+        cardMd += `| **Purchase Cost** | ${mc.financials.purchasePrice} | **Total Maintenance Spend** | **${mc.financials.totalMaintenanceCost}** |\n`;
+        cardMd += `| **Repair-to-Replacement Ratio** | **${mc.financials.repairVsReplacementRatio || 'N/A'}** | **Total Labor Invested** | ${mc.reliabilityMetrics.totalRecordedLaborHours} |\n\n`;
+
+        cardMd += `### 📜 Historical Work Orders Log (All-Time Lifecycle Records — ${mc.workOrderHistory?.length || 0} Orders)\n`;
+        if (mc.workOrderHistory && mc.workOrderHistory.length > 0) {
+          cardMd += `| WONUM | Description | Type | Status | Labor Hours | Report Date |\n`;
+          cardMd += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+          mc.workOrderHistory.forEach(h => {
+            cardMd += `| **${h.wonum}** | ${h.description} | \`${h.worktype}\` | \`${h.status}\` | ${h.laborHours} | ${h.reportdate} |\n`;
+          });
+        } else {
+          cardMd += `*No previous work order history logged for this asset.*\n`;
+        }
+        cardMd += `\n</div>\n`;
+        reply = cardMd;
+      } else if (unplannedSummaryLog) {
+        const data = unplannedSummaryLog.result;
+        let tableMd = `### 🚨 Unplanned Corrective & Emergency Work Orders (CM & EM) by Site\n\n`;
+        tableMd += `| Site ID | Site Name | Work Type | Status | Unplanned Count |\n`;
+        tableMd += `| :--- | :--- | :--- | :--- | :--- |\n`;
+        data.summaryBySite.forEach(s => {
+          tableMd += `| **${s.siteid}** | ${s.siteName} | \`${s.workType}\` | \`${s.statusFilter}\` | **${s.unplannedCount}** |\n`;
+        });
+        tableMd += `\n**Total Unplanned Work Orders (${data.filterStatus}):** ${data.totalUnplannedWorkOrders} across ${data.sitesCount} sites.\n`;
+        reply = tableMd;
+      } else if (woSummaryLog) {
+        const data = woSummaryLog.result;
+        let tableMd = `### 📋 Work Orders Summary by Site (${data.filterStatus || 'ALL'})\n\n`;
+        tableMd += `| Site ID | Site Name | Status | Work Order Count |\n`;
+        tableMd += `| :--- | :--- | :--- | :--- |\n`;
+        data.summaryBySite.forEach(s => {
+          tableMd += `| **${s.siteid}** | ${s.siteName} | \`${s.statusFilter}\` | **${s.workOrderCount}** |\n`;
+        });
+        tableMd += `\n**Total Work Orders (${data.filterStatus}):** ${data.totalWorkOrders} across ${data.sitesCount} sites.\n`;
+        reply = tableMd;
+      } else if (woToolLog && woToolLog.result.length > 0) {
+        const rows = woToolLog.result;
+        const isUnplanned = woToolLog.tool === 'get_unplanned_work_orders';
+        let tableMd = `Here is the list of ${isUnplanned ? '🚨 **Unplanned (CM/EM) Work Orders**' : '**Work Orders**'} (${rows[0]?.status || 'ALL'}):\n\n`;
+        tableMd += `| WONUM | Description | Type | Status | Asset | Location | Site | Report Date |\n`;
+        tableMd += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+        rows.forEach(r => {
+          const dateStr = r.reportdate ? (r.reportdate.includes('T') ? r.reportdate.split('T')[0] : r.reportdate) : 'N/A';
+          tableMd += `| **${r.wonum}** | ${r.description || 'N/A'} | \`${r.worktype || 'CM'}\` | \`${r.status}\` | ${r.assetnum || 'N/A'} | ${r.location || 'N/A'} | ${r.siteid || 'TEST'} | ${dateStr} |\n`;
+        });
+        tableMd += `\n*Total Records Displayed: ${rows.length} ${isUnplanned ? 'Unplanned' : ''} Work Orders.*\n`;
+        reply = tableMd;
+      } else {
+        const finalResponse = await ollama.chat({
+          model,
+          messages: conversation,
+          keep_alive: -1,
+          options: ollamaOptions
+        });
+        reply = finalResponse.message?.content || 'Done.';
+      }
       updateMemoryFromText(sessionId, reply, executedToolsLog);
 
       // Persist conversation to disk for the logged-in user

@@ -17,12 +17,66 @@ const toolRegistry = [
             status: { type: 'string', description: 'Work Order status: WAPPR, APPR, INPRG, COMP, CLOSE.' },
             location: { type: 'string', description: 'Maximo location tag/code (e.g. TEST, BLDG-A, SUB-01).' },
             siteid: { type: 'string', description: 'Maximo Site ID (defaults to system site).' },
-            limit: { type: 'number', description: 'Maximum records to return (default 5).' }
+            all_sites: { type: 'boolean', description: 'Set to true to query work orders across all sites.' },
+            limit: { type: 'number', description: 'Maximum records to return (default 10).' }
           }
         }
       }
     },
     execute: async (args) => await maximoService.getWorkOrders(args)
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_work_order_site_summary',
+        description: 'Get a clean consolidated summary table of work order counts grouped by Site (supports status filter e.g. WAPPR, APPR, INPRG across all sites).',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', description: 'Work order status to filter (e.g. WAPPR, APPR, INPRG).' },
+            siteid: { type: 'string', description: 'Specific site ID or leave blank/ALL for all sites.' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getWorkOrderSummaryBySite(args)
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_unplanned_work_orders',
+        description: 'Query detailed list of unplanned work orders (Corrective Maintenance CM or Emergency Maintenance EM) by site or across all sites.',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', description: 'Work order status (e.g. WAPPR, APPR, INPRG, COMP).' },
+            siteid: { type: 'string', description: 'Specific Maximo site ID or leave blank for active site.' },
+            all_sites: { type: 'boolean', description: 'Set to true to query across all sites.' },
+            limit: { type: 'number', description: 'Maximum records to return (default 15).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getUnplannedWorkOrders(args)
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_unplanned_work_orders_summary',
+        description: 'Get a consolidated summary table of unplanned work orders (CM & EM) with counts and status breakdown grouped by Site across all sites.',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', description: 'Work order status (e.g. WAPPR, APPR, INPRG).' },
+            siteid: { type: 'string', description: 'Specific site ID or leave blank/ALL for all sites.' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getUnplannedWorkOrdersSummary(args)
   },
   {
     schema: {
@@ -157,6 +211,24 @@ const toolRegistry = [
       }
     },
     execute: async (args) => await maximoService.getAsset(args)
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_machine_card',
+        description: 'Generate a comprehensive Machine Card (Asset Passport) including technical specifications, health rating, financial lifecycle spend, MTTR, failure history, and work orders history log.',
+        parameters: {
+          type: 'object',
+          properties: {
+            assetnum: { type: 'string', description: 'Target Asset Number (e.g. ASSET124, PUMP-101).' },
+            siteid: { type: 'string', description: 'Maximo Site ID (defaults to active site).' }
+          },
+          required: ['assetnum']
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getMachineCard(args)
   },
   {
     schema: {
@@ -558,6 +630,27 @@ const toolRegistry = [
       }
     },
     execute: async (args) => await ragService.search(args.query)
+  },
+
+  // --- PREVENTIVE MAINTENANCE FORECAST (PPM) ---
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_ppm_forecast',
+        description: 'Extract Preventive Maintenance (PPM) schedule based on estimated next forecast date (FORECASTDATE / NEXTDATE) for a specific site or asset in the PM application.',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo site ID (e.g. TEST, BEDFORD, EAGLE).' },
+            status: { type: 'string', description: 'PM status: ACTIVE, DRAFT, INACT (default ACTIVE).' },
+            assetnum: { type: 'string', description: 'Optional specific asset number (e.g. ASSET124).' },
+            limit: { type: 'number', description: 'Maximum PPM records to extract (default 20).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await maximoService.getPpmForecast(args)
   },
 
   // --- EXTERNAL KNOWLEDGE ---

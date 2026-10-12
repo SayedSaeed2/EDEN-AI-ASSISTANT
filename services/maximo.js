@@ -14,22 +14,30 @@ const maximoClient = axios.create({
 
 export const maximoService = {
   // --- Existing Work Order Methods ---
-  async getWorkOrders({ status, location, siteid, limit = 5 }) {
+  async getWorkOrders({ status, location, siteid, all_sites = false, limit = 10 }) {
     try {
       const site = siteid || process.env.MAXIMO_DEFAULT_SITE;
-      let oslcWhere = `siteid="${site}"`;
-      if (status) oslcWhere += ` and status="${status}"`;
-      if (location) oslcWhere += ` and location="${location.trim().toUpperCase()}"`;
+      let oslcWhere = '';
+      if (!all_sites && site) {
+        oslcWhere = `siteid="${site}"`;
+      }
+      if (status) {
+        oslcWhere += (oslcWhere ? ' and ' : '') + `status="${status}"`;
+      }
+      if (location) {
+        oslcWhere += (oslcWhere ? ' and ' : '') + `location="${location.trim().toUpperCase()}"`;
+      }
 
-      const response = await maximoClient.get('/MXWO', {
-        params: {
-          'oslc.where': oslcWhere,
-          'oslc.select': 'wonum,description,status,statusdate,assetnum,location,reportdate',
-          'oslc.pageSize': limit,
-          'lean': 1
-        }
-      });
+      const params = {
+        'oslc.select': 'wonum,description,status,statusdate,assetnum,location,siteid,reportdate',
+        'oslc.pageSize': limit || 15,
+        'lean': 1
+      };
+      if (oslcWhere) {
+        params['oslc.where'] = oslcWhere;
+      }
 
+      const response = await maximoClient.get('/MXWO', { params });
       const members = response.data?.member || [];
       return members.map(wo => ({
         wonum: wo.wonum,
@@ -37,10 +45,166 @@ export const maximoService = {
         status: wo.status,
         assetnum: wo.assetnum || 'N/A',
         location: wo.location || 'N/A',
+        siteid: wo.siteid || site || 'N/A',
         reportdate: wo.reportdate
       }));
     } catch (err) {
       return { error: `Failed to query work orders: ${err.response?.data?.Error?.message || err.message}` };
+    }
+  },
+
+  // Cross-Site and Single-Site Work Order Status Breakdown Summary Table
+  async getWorkOrderSummaryBySite({ status, siteid }) {
+    try {
+      let sitesList = [];
+      if (siteid && siteid.toUpperCase() !== 'ALL') {
+        sitesList = [{ siteid: siteid.toUpperCase(), description: `Site ${siteid.toUpperCase()}` }];
+      } else {
+        sitesList = await this.getSites();
+      }
+
+      const sitesToQuery = sitesList;
+      const results = await Promise.all(
+        sitesToQuery.map(async (s) => {
+          try {
+            let whereClause = `siteid="${s.siteid}" and istask=false`;
+            if (status) whereClause += ` and status="${status}"`;
+
+            const res = await maximoClient.get('/MXWO', {
+              params: {
+                'oslc.where': whereClause,
+                'oslc.count': 1,
+                'lean': 1
+              }
+            });
+            const count = res.data?.totalCount ?? res.headers['x-total-count'] ?? (res.data?.member ? res.data.member.length : 0);
+            return {
+              siteid: s.siteid,
+              siteName: s.description || s.siteid,
+              statusFilter: status || 'ALL',
+              workOrderCount: Number(count)
+            };
+          } catch (e) {
+            return {
+              siteid: s.siteid,
+              siteName: s.description || s.siteid,
+              statusFilter: status || 'ALL',
+              workOrderCount: 0
+            };
+          }
+        })
+      );
+
+      const totalAcrossSites = results.reduce((sum, r) => sum + r.workOrderCount, 0);
+
+      return {
+        filterStatus: status || 'ALL',
+        totalWorkOrders: totalAcrossSites,
+        sitesCount: results.length,
+        summaryBySite: results
+      };
+    } catch (err) {
+      return { error: `Failed to generate work order site summary: ${err.message}` };
+    }
+  },
+
+  // --- UNPLANNED / CORRECTIVE WORK ORDERS (CM & EM) ---
+  // 1. Fetch detailed unplanned work orders (Corrective CM or Emergency EM)
+  async getUnplannedWorkOrders({ status, siteid, all_sites = false, limit = 15 }) {
+    try {
+      const site = siteid || process.env.MAXIMO_DEFAULT_SITE;
+      let oslcWhere = '';
+      if (!all_sites && site && site.toUpperCase() !== 'ALL') {
+        oslcWhere = `siteid="${site}"`;
+      }
+      
+      // Unplanned work types in Maximo EAM: Corrective Maintenance (CM) and Emergency Maintenance (EM)
+      const unplannedCondition = '(worktype="CM" or worktype="EM")';
+      oslcWhere = oslcWhere ? `${oslcWhere} and ${unplannedCondition}` : unplannedCondition;
+
+      if (status) {
+        oslcWhere += ` and status="${status.toUpperCase()}"`;
+      }
+
+      const params = {
+        'oslc.where': oslcWhere,
+        'oslc.select': 'wonum,description,worktype,status,statusdate,assetnum,location,siteid,reportdate',
+        'oslc.pageSize': limit || 15,
+        'lean': 1
+      };
+
+      const response = await maximoClient.get('/MXWO', { params });
+      const members = response.data?.member || [];
+      return members.map(wo => ({
+        wonum: wo.wonum,
+        description: wo.description,
+        worktype: wo.worktype || 'CM',
+        status: wo.status,
+        assetnum: wo.assetnum || 'N/A',
+        location: wo.location || 'N/A',
+        siteid: wo.siteid || site || 'N/A',
+        reportdate: wo.reportdate
+      }));
+    } catch (err) {
+      return { error: `Failed to fetch unplanned work orders: ${err.response?.data?.Error?.message || err.message}` };
+    }
+  },
+
+  // 2. Fetch summary count of unplanned work orders grouped by site and status
+  async getUnplannedWorkOrdersSummary({ status, siteid }) {
+    try {
+      let sitesList = [];
+      if (siteid && siteid.toUpperCase() !== 'ALL') {
+        sitesList = [{ siteid: siteid.toUpperCase(), description: `Site ${siteid.toUpperCase()}` }];
+      } else {
+        sitesList = await this.getSites();
+      }
+
+      const targetSites = sitesList;
+      const results = await Promise.all(
+        targetSites.map(async (s) => {
+          try {
+            let whereClause = `siteid="${s.siteid}" and istask=false and (worktype="CM" or worktype="EM")`;
+            if (status) whereClause += ` and status="${status.toUpperCase()}"`;
+
+            const res = await maximoClient.get('/MXWO', {
+              params: {
+                'oslc.where': whereClause,
+                'oslc.count': 1,
+                'lean': 1
+              }
+            });
+            const count = res.data?.totalCount ?? res.headers['x-total-count'] ?? (res.data?.member ? res.data.member.length : 0);
+            return {
+              siteid: s.siteid,
+              siteName: s.description || s.siteid,
+              workType: 'CM / EM (Unplanned)',
+              statusFilter: status || 'ALL',
+              unplannedCount: Number(count)
+            };
+          } catch (e) {
+            return {
+              siteid: s.siteid,
+              siteName: s.description || s.siteid,
+              workType: 'CM / EM (Unplanned)',
+              statusFilter: status || 'ALL',
+              unplannedCount: 0
+            };
+          }
+        })
+      );
+
+      const totalUnplanned = results.reduce((sum, r) => sum + r.unplannedCount, 0);
+
+      return {
+        workType: 'CM / EM (Unplanned Corrective & Emergency)',
+        filterStatus: status || 'ALL',
+        totalUnplannedWorkOrders: totalUnplanned,
+        sitesCount: results.length,
+        summaryBySite: results
+      };
+    } catch (err) {
+      return { error: `Failed to generate unplanned work orders summary: ${err.message}` };
     }
   },
 
@@ -283,6 +447,145 @@ export const maximoService = {
     }
   },
 
+  // --- MACHINE CARD: Comprehensive Asset Passport & Lifecycle History ---
+  async getMachineCard({ assetnum, siteid }) {
+    try {
+      const site = siteid || process.env.MAXIMO_DEFAULT_SITE;
+      const cleanAsset = (assetnum || '').trim().toUpperCase();
+
+      // 1. Fetch Asset Master Record
+      let assetWhere = `assetnum="${cleanAsset}"`;
+      if (site) assetWhere += ` and siteid="${site}"`;
+
+      const assetRes = await maximoClient.get('/MXASSET', {
+        params: {
+          'oslc.where': assetWhere,
+          'oslc.select': 'assetnum,description,status,location,siteid,vendor,manufacturer,modelnum,serialnum,installdate,purchaseprice,totmaintcost,failurecode,priority',
+          'lean': 1
+        }
+      });
+
+      const asset = assetRes.data?.member?.[0];
+      if (!asset) {
+        return { error: `Asset "${cleanAsset}" not found in site ${site || 'all'}.` };
+      }
+
+      // 2. Fetch Historical Top-Level Work Orders for this Asset (exclude child tasks/sub-orders)
+      let woWhere = `assetnum="${cleanAsset}" and istask=false`;
+      if (asset.siteid) woWhere += ` and siteid="${asset.siteid}"`;
+
+      const woRes = await maximoClient.get('/MXWO', {
+        params: {
+          'oslc.where': woWhere,
+          'oslc.select': 'wonum,parent,istask,description,worktype,status,actstart,actfinish,actlabhrs,actmatcost,actlabcost,actservcost,reportdate,failurecode',
+          'oslc.pageSize': 500, // Fetch complete all-time historical work order log for the asset
+          'oslc.orderBy': '-reportdate',
+          'lean': 1
+        }
+      });
+
+      // Filter out child work orders if parent is present, focusing purely on top-level root work orders
+      const allMembers = woRes.data?.member || [];
+      const topLevelWorkOrders = allMembers.filter(wo => !wo.parent && wo.istask !== true && wo.istask !== 1);
+      const workOrders = topLevelWorkOrders.length > 0 ? topLevelWorkOrders : allMembers;
+
+      // 3. Aggregate Maintenance Metrics & Financial History
+      let totalRepairs = 0;
+      let correctiveCount = 0;
+      let preventiveCount = 0;
+      let emergencyCount = 0;
+      let totalLaborHours = 0;
+      let totalMaintenanceSpend = 0;
+      let activeBacklogCount = 0;
+
+      workOrders.forEach(wo => {
+        const wt = (wo.worktype || '').toUpperCase();
+        const st = (wo.status || '').toUpperCase();
+
+        totalRepairs++;
+        if (wt === 'CM') correctiveCount++;
+        else if (wt === 'PM' || wt === 'RT') preventiveCount++;
+        else if (wt === 'EM') emergencyCount++;
+
+        if (['WAPPR', 'APPR', 'INPRG', 'WSCH'].includes(st)) {
+          activeBacklogCount++;
+        }
+
+        if (wo.actlabhrs) totalLaborHours += parseFloat(wo.actlabhrs) || 0;
+        
+        const matCost = parseFloat(wo.actmatcost || 0);
+        const labCost = parseFloat(wo.actlabcost || 0);
+        const servCost = parseFloat(wo.actservcost || 0);
+        totalMaintenanceSpend += (matCost + labCost + servCost);
+      });
+
+      // MTTR (Mean Time to Repair)
+      const mttr = (correctiveCount + emergencyCount) > 0 
+        ? (totalLaborHours / (correctiveCount + emergencyCount)).toFixed(1) + ' hrs' 
+        : '0.0 hrs';
+
+      // Purchase & Lifecycle Financial Ratios
+      const purchasePrice = parseFloat(asset.purchaseprice || 0);
+      const recordedMaintCost = parseFloat(asset.totmaintcost || totalMaintenanceSpend || 0);
+      const repairVsReplacementRatio = purchasePrice > 0 
+        ? Math.round((recordedMaintCost / purchasePrice) * 100) 
+        : null;
+
+      // Health Classification
+      let healthStatus = 'STABLE (HEALTHY)';
+      if (emergencyCount >= 3 || (repairVsReplacementRatio && repairVsReplacementRatio >= 85)) {
+        healthStatus = 'CRITICAL (HIGH RISK / MONEY PIT)';
+      } else if (correctiveCount > preventiveCount || (repairVsReplacementRatio && repairVsReplacementRatio >= 50)) {
+        healthStatus = 'MONITOR CLOSELY (MODERATE WEAR)';
+      }
+
+      // Complete All-Time Work Orders for History log
+      const allTimeHistory = workOrders.map(wo => ({
+        wonum: wo.wonum,
+        description: wo.description || 'Maintenance',
+        worktype: wo.worktype || 'CM',
+        status: wo.status,
+        reportdate: wo.reportdate ? (wo.reportdate.includes('T') ? wo.reportdate.split('T')[0] : wo.reportdate) : 'N/A',
+        laborHours: wo.actlabhrs ? `${parseFloat(wo.actlabhrs).toFixed(1)}h` : 'N/A'
+      }));
+
+      return {
+        cardType: 'MACHINE_PASSPORT_CARD',
+        assetnum: asset.assetnum,
+        description: asset.description || 'Equipment',
+        status: asset.status,
+        siteid: asset.siteid || site,
+        location: asset.location || 'N/A',
+        manufacturer: asset.manufacturer || 'N/A',
+        modelnum: asset.modelnum || 'N/A',
+        serialnum: asset.serialnum || 'N/A',
+        vendor: asset.vendor || 'N/A',
+        installdate: asset.installdate ? (asset.installdate.includes('T') ? asset.installdate.split('T')[0] : asset.installdate) : 'N/A',
+        priority: asset.priority || 'Medium',
+        failurecode: asset.failurecode || 'N/A',
+        financials: {
+          purchasePrice: purchasePrice > 0 ? `$${purchasePrice.toLocaleString()}` : 'N/A',
+          totalMaintenanceCost: `$${recordedMaintCost.toLocaleString()}`,
+          repairVsReplacementRatio: repairVsReplacementRatio !== null ? `${repairVsReplacementRatio}%` : 'N/A',
+          replacementRecommendation: (repairVsReplacementRatio && repairVsReplacementRatio >= 80) ? 'CAPEX_REPLACEMENT_DUE' : 'CONTINUE_OPERATION'
+        },
+        reliabilityMetrics: {
+          healthStatus,
+          totalWorkOrders: totalRepairs,
+          correctiveMaintenanceCount: correctiveCount,
+          preventiveMaintenanceCount: preventiveCount,
+          emergencyBreakdownCount: emergencyCount,
+          activeBacklogOrders: activeBacklogCount,
+          totalRecordedLaborHours: `${totalLaborHours.toFixed(1)} hrs`,
+          mttr
+        },
+        workOrderHistory: allTimeHistory
+      };
+    } catch (err) {
+      return { error: `Failed to compile machine card for ${assetnum}: ${err.response?.data?.Error?.message || err.message}` };
+    }
+  },
+
   // --- Total Asset Count / KPI ---
   async getAssetCount({ status, siteid }) {
     try {
@@ -341,7 +644,7 @@ export const maximoService = {
     }
   },
 
-  // --- Query Sites with Multiple OSLC Fallbacks ---
+  // --- Query Sites: Exclusively Fetch Active Sites from IBM Maximo ---
   async getSites() {
     const rawClient = axios.create({
       baseURL: process.env.MAXIMO_BASE_URL,
@@ -353,96 +656,89 @@ export const maximoService = {
       timeout: 10000
     });
 
-    // 1. Primary: Custom Maximo Automation Script (/oslc/script/GETALLSITES)
-    try {
-      console.log(`[GETALLSITES] Requesting: ${process.env.MAXIMO_BASE_URL}/oslc/script/GETALLSITES`);
-      const response = await rawClient.get('/oslc/script/GETALLSITES');
-      const data = response.data;
-      console.log('[GETALLSITES] Raw response type:', typeof data, 'is Array:', Array.isArray(data));
-      console.log('[GETALLSITES] Raw response sample:', JSON.stringify(data).substring(0, 300));
-      
-      // Handle array or wrapped object from script
-      let list = [];
-      if (Array.isArray(data)) {
-        list = data;
-      } else if (typeof data === 'object' && data !== null) {
-        list = data.resources || data.RESOURCES || data.sites || data.SITES || data.member || data['oslc:member'] || data.result || data.data || [];
-        if (!Array.isArray(list)) {
-          list = Object.values(data);
-        }
-      }
-
-      if (list.length > 0) {
-        const parsed = list.map(s => {
-          if (typeof s === 'string') {
-            return { siteid: s.trim(), description: `Site ${s.trim()}`, active: true };
-          }
-          const id = s.siteid || s.SITEID || s.id || s.SITE || s.value;
-          const desc = s.description || s.DESCRIPTION || s.desc || s.name || id;
-          return {
-            siteid: String(id || '').trim(),
-            description: String(desc || id || '').trim(),
-            active: s.active !== undefined ? s.active : true,
-            orgid: s.orgid || s.ORGID || ''
-          };
-        }).filter(s => Boolean(s.siteid));
-
-        console.log(`[GETALLSITES] Successfully parsed ${parsed.length} sites:`, parsed.map(p => p.siteid));
-        if (parsed.length > 0) return parsed;
-      }
-    } catch (err) {
-      console.error('[GETALLSITES] Call failed:', {
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        data: err.response?.data,
-        message: err.message
-      });
-    }
-
-    // 2. Try Maximo MBO endpoint for table SITE (/oslc/mbo/site)
-    try {
-      const response = await rawClient.get('/oslc/mbo/site', {
-        params: {
-          'oslc.select': 'siteid,description,active,orgid',
-          'oslc.pageSize': 100,
-          'lean': 1
-        }
-      });
-      const members = response.data?.member || response.data?.['oslc:member'] || [];
-      if (members.length > 0) {
-        return members.map(s => ({
-          siteid: s.siteid,
-          description: s.description || s.siteid,
-          active: s.active !== undefined ? s.active : true,
-          orgid: s.orgid || ''
-        }));
-      }
-    } catch (err) {
-      // Ignore
-    }
-
-    // 2. Try OS /SITE or /MXSITE
-    for (const osName of ['SITE', 'MXSITE', 'REP_SITE']) {
+    // 1. Primary: Direct Query to Maximo SITE MBO / Object Structure with strict active=1 filter
+    for (const ep of ['/oslc/mbo/site', '/oslc/os/MXSITE', '/oslc/os/SITE', '/oslc/os/REP_SITE']) {
       try {
-        const response = await maximoClient.get(`/${osName}`, {
+        const isMbo = ep.includes('/mbo/');
+        const clientToUse = isMbo ? rawClient : maximoClient;
+        const subPath = isMbo ? '/oslc/mbo/site' : ep.replace('/oslc/os', '');
+
+        const response = await clientToUse.get(subPath, {
           params: {
+            'oslc.where': 'active=1 or active=true',
             'oslc.select': 'siteid,description,active,orgid',
             'oslc.pageSize': 100,
             'lean': 1
           }
         });
+
         const members = response.data?.member || response.data?.['oslc:member'] || [];
-        if (members.length > 0) {
-          return members.map(s => ({
-            siteid: s.siteid,
-            description: s.description || s.siteid,
-            active: s.active !== undefined ? s.active : true,
-            orgid: s.orgid || ''
-          }));
+        if (Array.isArray(members) && members.length > 0) {
+          const activeOnly = members
+            .filter(s => {
+              if (s.active === false || s.active === 0 || s.active === '0' || s.active === 'N' || s.active === 'false') {
+                return false;
+              }
+              return true;
+            })
+            .map(s => ({
+              siteid: String(s.siteid || '').trim().toUpperCase(),
+              description: s.description || `Site ${s.siteid}`,
+              active: true,
+              orgid: s.orgid || ''
+            }))
+            .filter(s => Boolean(s.siteid));
+
+          if (activeOnly.length > 0) {
+            console.log(`[getSites] Successfully fetched ${activeOnly.length} active sites from ${ep}:`, activeOnly.map(s => s.siteid));
+            return activeOnly;
+          }
         }
       } catch (err) {
-        // Continue
+        // Try next endpoint
       }
+    }
+
+    // 2. Secondary: Maximo Automation Script (/oslc/script/GETALLSITES)
+    try {
+      console.log(`[GETALLSITES] Requesting: ${process.env.MAXIMO_BASE_URL}/oslc/script/GETALLSITES`);
+      const response = await rawClient.get('/oslc/script/GETALLSITES');
+      const data = response.data;
+
+      let list = [];
+      if (Array.isArray(data)) {
+        list = data;
+      } else if (typeof data === 'object' && data !== null) {
+        list = data.resources || data.RESOURCES || data.sites || data.SITES || data.member || data['oslc:member'] || data.result || data.data || [];
+        if (!Array.isArray(list)) list = Object.values(data);
+      }
+
+      if (list.length > 0) {
+        const parsed = list.map(s => {
+          if (typeof s === 'string') {
+            return { siteid: s.trim().toUpperCase(), description: `Site ${s.trim()}`, active: true };
+          }
+          const id = s.siteid || s.SITEID || s.id || s.SITE || s.value;
+          const desc = s.description || s.DESCRIPTION || s.desc || s.name || id;
+          const rawActive = s.active !== undefined ? s.active : (s.ACTIVE !== undefined ? s.ACTIVE : (s.status !== undefined ? s.status : true));
+          const isInactive = rawActive === false || rawActive === 0 || rawActive === '0' || rawActive === 'N' || rawActive === 'false' || rawActive === 'INACTIVE';
+          return {
+            siteid: String(id || '').trim().toUpperCase(),
+            description: String(desc || id || '').trim(),
+            active: !isInactive,
+            orgid: s.orgid || s.ORGID || ''
+          };
+        })
+        .filter(s => Boolean(s.siteid))
+        .filter(s => s.active === true); // Discard any inactive site
+
+        if (parsed.length > 0) {
+          console.log(`[GETALLSITES] Successfully parsed ${parsed.length} active sites:`, parsed.map(p => p.siteid));
+          return parsed;
+        }
+      }
+    } catch (err) {
+      // Continue to fallback
     }
 
     // 3. Scan distinct sites from Work Orders (/MXWO)
@@ -1544,6 +1840,229 @@ export const maximoService = {
       };
     } catch (err) {
       return { error: `Failed to compile executive audit brief: ${err.message}` };
+    }
+  },
+
+  // --- PREVENTIVE MAINTENANCE (PPM) FORECAST SCHEDULE ---
+  // Query PPM records based on estimated next date (FORECASTDATE / NEXTDATE / TARGSTARTDATE)
+  async getPpmForecast({ siteid, status, assetnum, limit }) {
+    try {
+      const site = (siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST').trim().toUpperCase();
+      const rawClient = axios.create({
+        baseURL: process.env.MAXIMO_BASE_URL,
+        headers: {
+          'apikey': process.env.MAXIMO_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 15000
+      });
+
+      let pmMembers = null;
+      let usedEndpoint = null;
+
+      // 1. Try querying Maximo PM Application (MBO / Object Structure)
+      const pmEndpoints = ['/oslc/os/MXAPIPM', '/oslc/os/MXPM', '/oslc/mbo/pm', '/oslc/os/PLUSMPM', '/oslc/os/PM'];
+
+      for (const ep of pmEndpoints) {
+        try {
+          const isMbo = ep.includes('/mbo/');
+          const clientToUse = isMbo ? rawClient : maximoClient;
+          const subPath = isMbo ? '/oslc/mbo/pm' : ep.replace('/oslc/os', '');
+
+          let oslcWhere = '';
+          if (site && site !== 'ALL') {
+            oslcWhere = `siteid="${site}"`;
+          }
+          if (status && status.toUpperCase() !== 'ALL') {
+            oslcWhere += (oslcWhere ? ' and ' : '') + `status="${status.toUpperCase()}"`;
+          }
+          if (assetnum) {
+            oslcWhere += (oslcWhere ? ' and ' : '') + `assetnum="${assetnum.trim().toUpperCase()}"`;
+          }
+
+          const pageSize = 100;
+          const params = {
+            'oslc.select': 'pmnum,description,siteid,status,forecastdate,nextdate,targstartdate,assetnum,location,frequency,frequnit,priority,jpnum',
+            'oslc.pageSize': pageSize,
+            'oslc.paging': 'true',
+            'lean': 1
+          };
+          if (oslcWhere) params['oslc.where'] = oslcWhere;
+
+          let allItems = [];
+          let currentUrl = subPath;
+          let currentParams = params;
+          let maxPages = 20; // safety ceiling up to 2,000 records
+          let pageCount = 0;
+
+          while (currentUrl && pageCount < maxPages) {
+            pageCount++;
+            const res = currentUrl.startsWith('http')
+              ? await axios.get(currentUrl, {
+                  headers: {
+                    'apikey': process.env.MAXIMO_API_KEY,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                  },
+                  timeout: 15000
+                })
+              : await clientToUse.get(currentUrl, { params: currentParams });
+
+            const pageMembers = res.data?.member || res.data?.['oslc:member'] || [];
+            if (Array.isArray(pageMembers) && pageMembers.length > 0) {
+              allItems.push(...pageMembers);
+            }
+
+            // Check next page in OSLC responseinfo
+            const nextPage = res.data?.responseinfo?.nextPage?.href ||
+                              res.data?.['oslc:responseInfo']?.['oslc:nextPage']?.['rdf:resource'] ||
+                              res.data?.nextPage;
+
+            if (nextPage && Array.isArray(pageMembers) && pageMembers.length === pageSize) {
+              currentUrl = nextPage;
+              currentParams = {}; // URL contains paging token/parameters
+            } else {
+              break;
+            }
+          }
+
+          if (allItems.length > 0) {
+            pmMembers = allItems;
+            usedEndpoint = ep;
+            break;
+          }
+        } catch (e) {
+          // Continue to next endpoint attempt
+        }
+      }
+
+      // 2. Fallback: Query PM Work Orders with target dates from /MXWO
+      if (!pmMembers) {
+        try {
+          let woWhere = `worktype="PM" and istask=false`;
+          if (site && site !== 'ALL') {
+            woWhere += ` and siteid="${site}"`;
+          }
+          if (assetnum) {
+            woWhere += ` and assetnum="${assetnum.trim().toUpperCase()}"`;
+          }
+          if (status && status.toUpperCase() !== 'ALL') {
+            woWhere += ` and status="${status.toUpperCase()}"`;
+          } else {
+            woWhere += ` and status in ["WAPPR","APPR","WSCHED","INPRG"]`;
+          }
+
+          const pageSize = 100;
+          let woAll = [];
+          let currentUrl = '/MXWO';
+          let currentParams = {
+            'oslc.where': woWhere,
+            'oslc.select': 'wonum,pmnum,description,siteid,status,targstartdate,schedstart,reportdate,assetnum,location,priority,jpnum',
+            'oslc.pageSize': pageSize,
+            'oslc.paging': 'true',
+            'lean': 1
+          };
+          let pageCount = 0;
+
+          while (currentUrl && pageCount < 20) {
+            pageCount++;
+            const woRes = currentUrl.startsWith('http')
+              ? await axios.get(currentUrl, {
+                  headers: {
+                    'apikey': process.env.MAXIMO_API_KEY,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                  },
+                  timeout: 15000
+                })
+              : await maximoClient.get(currentUrl, { params: currentParams });
+
+            const members = woRes.data?.member || [];
+            if (Array.isArray(members) && members.length > 0) {
+              woAll.push(...members);
+            }
+
+            const nextPage = woRes.data?.responseinfo?.nextPage?.href || woRes.data?.nextPage;
+            if (nextPage && Array.isArray(members) && members.length === pageSize) {
+              currentUrl = nextPage;
+              currentParams = {};
+            } else {
+              break;
+            }
+          }
+
+          if (woAll.length > 0) {
+            pmMembers = woAll.map(w => ({
+              pmnum: w.pmnum || w.wonum,
+              description: w.description || 'Preventive Maintenance Routine',
+              siteid: w.siteid || site,
+              status: w.status,
+              forecastdate: w.targstartdate || w.schedstart || w.reportdate || 'N/A',
+              nextdate: w.targstartdate || w.schedstart || w.reportdate || 'N/A',
+              assetnum: w.assetnum || 'N/A',
+              location: w.location || 'N/A',
+              frequency: 'Periodic',
+              frequnit: 'DAYS',
+              priority: w.priority || 'Medium',
+              jpnum: w.jpnum || 'N/A',
+              source: 'WORK_ORDER_PM'
+            }));
+            usedEndpoint = '/MXWO (PM Work Orders)';
+          }
+        } catch (woErr) {
+          console.warn('Fallback to MXWO for PPM failed:', woErr.message);
+        }
+      }
+
+      if (!pmMembers || pmMembers.length === 0) {
+        return {
+          site,
+          statusFilter: status,
+          assetFilter: assetnum || 'ALL',
+          totalPpmFound: 0,
+          records: [],
+          message: `No Preventive Maintenance (PPM) records found for site "${site}".`
+        };
+      }
+
+      // Format and clean forecast records
+      const formattedRecords = pmMembers.map(item => {
+        const estDate = item.forecastdate || item.nextdate || item.targstartdate || 'N/A';
+        const cleanDate = (estDate && estDate !== 'N/A' && estDate.includes('T')) ? estDate.split('T')[0] : estDate;
+
+        return {
+          pmnum: item.pmnum || item.wonum || 'N/A',
+          description: item.description || 'PPM Routine Inspection',
+          siteid: item.siteid || site,
+          status: item.status || 'ACTIVE',
+          forecastdate: cleanDate,
+          assetnum: item.assetnum || 'N/A',
+          location: item.location || 'N/A',
+          frequency: item.frequency ? `${item.frequency} ${item.frequnit || 'DAYS'}` : 'Periodic',
+          priority: item.priority || 'Normal',
+          jobplan: item.jpnum || 'N/A'
+        };
+      });
+
+      // Sort by estimated forecast date ascending
+      formattedRecords.sort((a, b) => {
+        if (a.forecastdate === 'N/A') return 1;
+        if (b.forecastdate === 'N/A') return -1;
+        return new Date(a.forecastdate) - new Date(b.forecastdate);
+      });
+
+      return {
+        cardType: 'PPM_FORECAST_SCHEDULE',
+        site,
+        statusFilter: status,
+        assetFilter: assetnum || 'ALL',
+        totalPpmFound: formattedRecords.length,
+        usedEndpoint,
+        records: formattedRecords
+      };
+    } catch (err) {
+      return { error: `Failed to extract PPM forecast: ${err.message}` };
     }
   }
 };

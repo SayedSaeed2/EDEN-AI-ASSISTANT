@@ -7,20 +7,50 @@ export const maximoController = {
   // Get Sites, Assets, and Locations context
   async getContext(req, res) {
     try {
-      const site = req.query.siteid || process.env.MAXIMO_DEFAULT_SITE || 'TEST';
-      
-      // Update memory with newly switched active site
-      const sessionId = req.query.sessionId || 'default-session';
-      memoryService.updateWorkingContext(sessionId, { activeSite: site });
+      const allowedSites = req.user?.allowedSites || ['*'];
+      const isUniversal = allowedSites.includes('*') || allowedSites.includes('ALL');
 
-      const [sites, assets, locations] = await Promise.all([
-        maximoService.getSites(),
-        maximoService.getAssets({ siteid: site, limit: 50 }),
-        maximoService.getLocations({ siteid: site, limit: 50 })
+      let rawSites = await maximoService.getSites();
+      let allSites = Array.isArray(rawSites) ? rawSites : [{ siteid: 'TEST', description: 'TEST' }];
+
+      // Filter sites to only authorized sites for this user
+      let accessibleSites = isUniversal
+        ? allSites
+        : allSites.filter(s => {
+            const sid = (typeof s === 'string' ? s : s.siteid || '').toUpperCase();
+            return allowedSites.map(a => a.toUpperCase()).includes(sid);
+          });
+
+      // If user has restricted sites but none matched, default to their first allowed site
+      if (accessibleSites.length === 0 && !isUniversal) {
+        accessibleSites = allowedSites.map(s => ({ siteid: s.toUpperCase(), description: `Site ${s.toUpperCase()}` }));
+      }
+
+      // Determine requested site and verify authorization
+      let requestedSite = (req.query.siteid || '').toUpperCase();
+      let activeSite;
+
+      if (isUniversal) {
+        activeSite = requestedSite || process.env.MAXIMO_DEFAULT_SITE || accessibleSites[0]?.siteid || 'TEST';
+      } else {
+        // Enforce that user cannot request a site outside their authorized list
+        const isAllowed = accessibleSites.some(s => (s.siteid || s).toUpperCase() === requestedSite);
+        activeSite = isAllowed ? requestedSite : accessibleSites[0]?.siteid || 'TEST';
+      }
+
+      // Update memory with active site
+      const sessionId = req.query.sessionId || 'default-session';
+      memoryService.updateWorkingContext(sessionId, { activeSite, allowedSites });
+
+      const [assets, locations] = await Promise.all([
+        maximoService.getAssets({ siteid: activeSite, limit: 50 }),
+        maximoService.getLocations({ siteid: activeSite, limit: 50 })
       ]);
+
       return res.json({
-        activeSite: site,
-        sites: Array.isArray(sites) ? sites : [site],
+        activeSite,
+        sites: accessibleSites,
+        allowedSites,
         assets: assets.assets || [],
         locations: Array.isArray(locations) ? locations : []
       });

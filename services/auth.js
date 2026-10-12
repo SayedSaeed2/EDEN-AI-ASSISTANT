@@ -100,6 +100,7 @@ export function authenticate(username, password) {
   return {
     username: user.username,
     displayName: user.displayName,
-    role: user.role
+    role: user.role,
+    allowedSites: user.allowedSites || ['*']
   };
 }

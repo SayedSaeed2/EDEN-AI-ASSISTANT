@@ -20,6 +20,7 @@ export const authController = {
       username: user.username,
       displayName: user.displayName,
       role: user.role,
+      allowedSites: user.allowedSites || ['*'],
       exp
     });
 
@@ -31,7 +32,8 @@ export const authController = {
       user: {
         username: user.username,
         displayName: user.displayName,
-        role: user.role
+        role: user.role,
+        allowedSites: user.allowedSites || ['*']
       },
       token
     });
@@ -55,7 +57,8 @@ export const authController = {
       user: {
         username: user.username,
         displayName: user.displayName,
-        role: user.role
+        role: user.role,
+        allowedSites: user.allowedSites || ['*']
       }
     });
   }

@@ -47,6 +47,19 @@ async function loadContext(siteId = '') {
           opt.textContent = currentVal;
           selectEl.appendChild(opt);
         }
+
+        // Security UX: If user is restricted to a single site, lock the dropdown
+        if (currentContext.sites && currentContext.sites.length === 1 && currentContext.allowedSites && !currentContext.allowedSites.includes('*')) {
+          selectEl.disabled = true;
+          selectEl.title = `Access locked to authorized site: ${currentVal}`;
+          selectEl.style.opacity = '0.85';
+          selectEl.style.cursor = 'not-allowed';
+        } else {
+          selectEl.disabled = false;
+          selectEl.title = 'Switch active site';
+          selectEl.style.opacity = '1';
+          selectEl.style.cursor = 'pointer';
+        }
       });
     }
 
@@ -352,6 +365,9 @@ function appendDefaultWelcomeMessage() {
         <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Alerts: Overdue Work Orders</button>
         <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Stock: Low Inventory Alerts</button>
         <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Read: Open Work Orders</button>
+        <button class="btn-quick" onclick="sendPrompt('Show unplanned work orders for all sites')">🚨 Unplanned: CM & EM Work Orders</button>
+        <button class="btn-quick" onclick="sendPrompt('Show PPM schedule forecast based on forecast date')">🗓️ PPM: Preventive Maintenance Forecast</button>
+        <button class="btn-quick" onclick="sendPrompt('Show machine card for asset ASSET124')">🏷️ Machine Card: Asset Passport & History</button>
         <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ Write: New Work Order (Prompt for Dept/Type)</button>
         <button class="btn-quick" onclick="sendPrompt('How many assets are registered in the active site?')">🏷️ Assets: Total Asset Count</button>
       </div>
@@ -627,8 +643,12 @@ window.handleApproval = async function(actionId, approved, cardId) {
 
 // Append message bubble with reasoning thoughts & rich dashboard visual cards
 function appendMessage(text, role, tools, reasoning) {
+  // Normalize role so 'assistant' (from loaded database history) and 'agent' behave identically
+  const isAgent = role === 'agent' || role === 'assistant';
+  const roleClass = isAgent ? 'agent' : 'user';
+
   const row = document.createElement('div');
-  row.className = `msg-row ${role === 'user' ? 'msg-user' : ''}`;
+  row.className = `msg-row ${!isAgent ? 'msg-user' : ''}`;
   
   let toolHtml = '';
   let dashboardWidgetsHtml = '';
@@ -639,7 +659,7 @@ function appendMessage(text, role, tools, reasoning) {
   }
 
   let reasoningHtml = '';
-  if (role === 'agent' && reasoning) {
+  if (isAgent && reasoning) {
     reasoningHtml = `
       <div class="reasoning-box">
         <div class="reasoning-toggle" onclick="toggleReasoning(this)">
@@ -650,29 +670,46 @@ function appendMessage(text, role, tools, reasoning) {
     `;
   }
 
-  const content = role === 'agent' && window.marked ? marked.parse(text) : escapeHtml(text);
-  row.innerHTML = `<div class="bubble bubble-${role}">${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
+  // Format and repair compressed single-line markdown tables (e.g. rows glued together with || or |:---|:---|)
+  let processedText = text || '';
+  if (isAgent && processedText) {
+    // If table rows were concatenated with double pipes "||", split into newlines
+    processedText = processedText.replace(/\s*\|\|\s*/g, ' |\n| ');
+    // Ensure table separator line sits on its own line
+    processedText = processedText.replace(/\|\s*(\|[-:]+[-| :]*\|)\s*\|/g, '|\n$1\n|');
+  }
+
+  const content = isAgent && window.marked ? marked.parse(processedText) : escapeHtml(processedText);
+  row.innerHTML = `<div class="bubble bubble-${roleClass}">${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
   chatBox.appendChild(row);
 
   // Automatically attach export action bars and responsive wrappers to all rendered data tables in agent bubble
-  if (role === 'agent') {
+  if (isAgent) {
     const bubble = row.querySelector('.bubble-agent');
     if (bubble) {
-      const tables = bubble.querySelectorAll('table');
-      tables.forEach((tbl, idx) => {
-        // If table is inside a widget or standalone, ensure it has export bar
-        const container = tbl.closest('.responsive-table-wrapper') || tbl.parentElement;
-        if (!container.previousElementSibling || !container.previousElementSibling.classList.contains('table-export-bar')) {
-          const exportBar = createTableExportBar(tbl, `maximo_report_${Date.now()}_${idx + 1}`);
-          container.parentNode.insertBefore(exportBar, container);
-        }
+      // Check if this bubble contains a Machine Passport Card
+      const machineCardEl = bubble.querySelector('.machine-passport-card');
+      if (machineCardEl && !machineCardEl.querySelector('.machine-card-export-toolbar')) {
+        const assetNum = machineCardEl.getAttribute('data-asset') || 'ASSET';
+        const cardExportBar = createMachineCardExportBar(machineCardEl, assetNum);
+        machineCardEl.insertBefore(cardExportBar, machineCardEl.firstChild);
+      }
 
-        // If table is not wrapped in responsive container, wrap it
-        if (!tbl.parentElement.classList.contains('responsive-table-wrapper')) {
-          const wrapper = document.createElement('div');
+      const tables = Array.from(bubble.querySelectorAll('table'));
+      tables.forEach((tbl, idx) => {
+        // Step 1: Wrap table in responsive scroll container if not already wrapped
+        let wrapper = tbl.closest('.responsive-table-wrapper');
+        if (!wrapper) {
+          wrapper = document.createElement('div');
           wrapper.className = 'responsive-table-wrapper';
           tbl.parentNode.insertBefore(wrapper, tbl);
           wrapper.appendChild(tbl);
+        }
+
+        // Step 2: Insert export toolbar directly before the responsive wrapper as a block
+        if (!wrapper.previousElementSibling || !wrapper.previousElementSibling.classList.contains('table-export-bar')) {
+          const exportBar = createTableExportBar(tbl, `maximo_report_${Date.now()}_${idx + 1}`);
+          wrapper.parentNode.insertBefore(exportBar, wrapper);
         }
       });
     }
@@ -1473,11 +1510,22 @@ let speechRecognition = null;
 let isListening = false;
 let finalAccumulatedText = '';
 let silenceTimeout = null;
+let currentVoiceLang = 'ar-EG'; // Defaults to Arabic
+
+window.toggleVoiceLanguage = function() {
+  const btn = document.getElementById('btn-voice-lang');
+  if (currentVoiceLang === 'ar-EG') {
+    currentVoiceLang = 'en-US';
+    if (btn) btn.textContent = 'EN';
+  } else {
+    currentVoiceLang = 'ar-EG';
+    if (btn) btn.textContent = 'AR';
+  }
+};
 
 window.toggleVoiceInput = function() {
   const voiceBtn = document.getElementById('voice-btn');
   const input = document.getElementById('user-input');
-  const langSelect = document.getElementById('voice-lang-select');
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -1499,10 +1547,7 @@ window.toggleVoiceInput = function() {
     speechRecognition.continuous = true;      // CRITICAL: Prevent premature exit on short pauses
     speechRecognition.interimResults = true;   // Live real-time feedback
     speechRecognition.maxAlternatives = 1;
-
-    // Use user-selected language or auto-detect
-    const selectedLang = langSelect ? langSelect.value : (navigator.language.startsWith('ar') ? 'ar-EG' : 'en-US');
-    speechRecognition.lang = selectedLang;
+    speechRecognition.lang = currentVoiceLang;
 
     speechRecognition.onstart = () => {
       isListening = true;
@@ -1516,18 +1561,20 @@ window.toggleVoiceInput = function() {
     };
 
     speechRecognition.onresult = (event) => {
+      let finalTranscript = '';
       let interimTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const transcriptChunk = event.results[i][0].transcript;
+
+      for (let i = 0; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalAccumulatedText += (finalAccumulatedText ? ' ' : '') + transcriptChunk.trim();
+          finalTranscript += transcript;
         } else {
-          interimTranscript += transcriptChunk;
+          interimTranscript += transcript;
         }
       }
 
       if (input) {
-        const fullLiveText = (finalAccumulatedText + ' ' + interimTranscript).trim();
+        const fullLiveText = (finalTranscript + ' ' + interimTranscript).trim();
         input.value = (basePrefix + fullLiveText).trim();
       }
 
@@ -1588,6 +1635,244 @@ window.toggleVoiceInput = function() {
 // ==========================================
 // EXPORT & REPORTING UTILITIES (CSV, EXCEL, PDF)
 // ==========================================
+
+// Create export toolbar DOM element for the whole Machine Passport Card
+function createMachineCardExportBar(cardEl, assetNum = 'ASSET') {
+  const bar = document.createElement('div');
+  bar.className = 'machine-card-export-toolbar';
+  bar.innerHTML = `
+    <div class="card-export-title">
+      <span>📑 Export Complete Machine Card:</span>
+      <span class="card-export-badge">${escapeHtml(assetNum)}</span>
+    </div>
+    <div class="card-export-actions">
+      <button type="button" class="btn-card-export btn-export-all-pdf" title="Export complete passport card and work order history as branded PDF">
+        📑 Export Full PDF
+      </button>
+      <button type="button" class="btn-card-export btn-export-all-excel" title="Export specs, metrics, and work order history to multi-sheet / structured Excel workbook">
+        📊 Export Full Excel
+      </button>
+      <button type="button" class="btn-card-export btn-export-print" title="Print or save as high-res document">
+        🖨️ Print Card
+      </button>
+    </div>
+  `;
+
+  bar.querySelector('.btn-export-all-pdf').onclick = () => exportWholeMachineCardPDF(cardEl, assetNum);
+  bar.querySelector('.btn-export-all-excel').onclick = () => exportWholeMachineCardExcel(cardEl, assetNum);
+  bar.querySelector('.btn-export-print').onclick = () => printMachineCard(cardEl, assetNum);
+
+  return bar;
+}
+
+// 1. Export Whole Machine Card as a structured, branded multi-section PDF document
+window.exportWholeMachineCardPDF = function(cardEl, assetNum = 'ASSET') {
+  if (!cardEl) return;
+  const jsPDFClass = window.jspdf ? window.jspdf.jsPDF : window.jsPDF;
+  if (!jsPDFClass) {
+    console.warn('jsPDF not loaded, falling back to print.');
+    return printMachineCard(cardEl, assetNum);
+  }
+
+  try {
+    const doc = new jsPDFClass({
+      orientation: 'portrait',
+      unit: 'pt',
+      format: 'a4'
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 28;
+    const contentWidth = pageWidth - (margin * 2);
+    const activeSite = document.getElementById('site-select')?.value || 'TEST';
+
+    // Header Branding Banner
+    doc.setFillColor(15, 23, 42); // Navy 900
+    doc.rect(0, 0, pageWidth, 54, 'F');
+
+    doc.setFontSize(13);
+    doc.setTextColor(56, 189, 248); // Sky blue
+    doc.setFont('helvetica', 'bold');
+    doc.text(`IBM MAXIMO — MACHINE PASSPORT & LIFECYCLE CARD`, margin, 26);
+
+    doc.setFontSize(8.5);
+    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Asset Tag: ${assetNum}   |   Site: ${activeSite}   |   Generated: ${new Date().toLocaleString()}`, margin, 42);
+
+    let currentY = 70;
+
+    // Extract title & overview quote from card
+    const titleEl = cardEl.querySelector('h2');
+    const quoteEl = cardEl.querySelector('blockquote');
+
+    if (titleEl) {
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('helvetica', 'bold');
+      const titleLines = doc.splitTextToSize(titleEl.innerText.replace(/^[^\w\d]+/, '').trim(), contentWidth);
+      doc.text(titleLines, margin, currentY);
+      currentY += (titleLines.length * 16) + 4;
+    }
+
+    if (quoteEl) {
+      doc.setFillColor(241, 245, 249);
+      doc.setDrawColor(56, 189, 248);
+      doc.setLineWidth(2);
+      
+      const quoteText = quoteEl.innerText.replace(/\n+/g, ' ').trim();
+      const quoteLines = doc.splitTextToSize(quoteText, contentWidth - 16);
+      const quoteHeight = (quoteLines.length * 13) + 12;
+
+      doc.rect(margin, currentY, contentWidth, quoteHeight, 'F');
+      doc.line(margin, currentY, margin, currentY + quoteHeight); // Left border accent
+
+      doc.setFontSize(8.5);
+      doc.setTextColor(30, 41, 59);
+      doc.setFont('helvetica', 'normal');
+      doc.text(quoteLines, margin + 8, currentY + 12);
+
+      currentY += quoteHeight + 14;
+    }
+
+    // Process all sections and tables
+    const sections = [
+      { heading: '⚙️ Technical Specifications & Asset Info', tableIdx: 0 },
+      { heading: '📊 Reliability & Maintenance Performance (Historical)', tableIdx: 1 },
+      { heading: '📜 Historical Work Orders Log', tableIdx: 2 }
+    ];
+
+    const tables = Array.from(cardEl.querySelectorAll('table'));
+
+    sections.forEach(sec => {
+      const tbl = tables[sec.tableIdx];
+      if (!tbl) return;
+
+      // Section Header
+      if (currentY > 730) {
+        doc.addPage();
+        currentY = 40;
+      }
+
+      doc.setFontSize(10.5);
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('helvetica', 'bold');
+      doc.text(sec.heading.replace(/[^\x20-\x7E]/g, '').trim() || sec.heading, margin, currentY);
+      currentY += 8;
+
+      if (typeof doc.autoTable === 'function') {
+        doc.autoTable({
+          html: tbl,
+          startY: currentY,
+          theme: 'grid',
+          margin: { left: margin, right: margin },
+          headStyles: {
+            fillColor: [15, 23, 42],
+            textColor: [56, 189, 248],
+            fontStyle: 'bold',
+            fontSize: 8.5
+          },
+          styles: {
+            fontSize: 7.5,
+            cellPadding: 4.5,
+            overflow: 'linebreak'
+          },
+          alternateRowStyles: {
+            fillColor: [248, 250, 252]
+          }
+        });
+        currentY = doc.lastAutoTable.finalY + 18;
+      }
+    });
+
+    // Add page numbers
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${i} of ${pageCount} — IBM Maximo Asset Management System`, margin, doc.internal.pageSize.getHeight() - 15);
+    }
+
+    doc.save(`Machine_Passport_${assetNum}_${Date.now()}.pdf`);
+  } catch (err) {
+    console.error('Full Machine Card PDF export error:', err);
+    printMachineCard(cardEl, assetNum);
+  }
+};
+
+// 2. Export Whole Machine Card to structured Excel Workbook (SheetJS)
+window.exportWholeMachineCardExcel = function(cardEl, assetNum = 'ASSET') {
+  if (!cardEl) return;
+  const xlsxLib = window.XLSX;
+  if (!xlsxLib) {
+    console.warn('SheetJS not loaded, falling back to PDF.');
+    return exportWholeMachineCardPDF(cardEl, assetNum);
+  }
+
+  try {
+    const wb = xlsxLib.utils.book_new();
+    const tables = Array.from(cardEl.querySelectorAll('table'));
+    const sheetNames = ['Technical Specs', 'Reliability KPIs', 'Work Order History'];
+
+    tables.forEach((tbl, idx) => {
+      const sName = sheetNames[idx] || `Section ${idx + 1}`;
+      const ws = xlsxLib.utils.table_to_sheet(tbl, { raw: true });
+      xlsxLib.utils.book_append_sheet(wb, ws, sName);
+    });
+
+    xlsxLib.writeFile(wb, `Machine_Passport_${assetNum}_${Date.now()}.xlsx`);
+  } catch (err) {
+    console.error('Full Machine Card Excel export error:', err);
+    exportWholeMachineCardPDF(cardEl, assetNum);
+  }
+};
+
+// 3. Print / High-Res Browser Print for Machine Card
+window.printMachineCard = function(cardEl, assetNum = 'ASSET') {
+  if (!cardEl) return;
+  const printWindow = window.open('', '_blank', 'width=950,height=800');
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+
+  const activeSite = document.getElementById('site-select')?.value || 'TEST';
+  const cardHtml = cardEl.innerHTML;
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Machine Passport Card - ${assetNum}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 30px; color: #0f172a; }
+          .machine-card-export-toolbar, .table-export-bar { display: none !important; }
+          .header-banner { border-bottom: 2px solid #0284c7; padding-bottom: 12px; margin-bottom: 20px; }
+          .header-banner h1 { margin: 0 0 6px 0; font-size: 20px; color: #0369a1; }
+          .header-banner p { margin: 0; font-size: 11px; color: #64748b; }
+          blockquote { background: #f8fafc; border-left: 4px solid #0284c7; margin: 12px 0 20px 0; padding: 10px 14px; font-size: 13px; color: #1e293b; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 12px; }
+          th, td { border: 1px solid #cbd5e1; padding: 7px 10px; text-align: left; }
+          th { background: #f1f5f9; font-weight: bold; color: #0f172a; }
+          h2, h3 { color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+        </style>
+      </head>
+      <body>
+        <div class="header-banner">
+          <h1>IBM Maximo — Machine Passport & History Card</h1>
+          <p>Asset: <strong>${assetNum}</strong> | Site: <strong>${activeSite}</strong> | Generated: ${new Date().toLocaleString()}</p>
+        </div>
+        ${cardHtml}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+  }, 400);
+};
 
 // Create export toolbar DOM element for a given table
 function createTableExportBar(tableEl, baseName = 'maximo_report') {
@@ -1736,14 +2021,126 @@ document.addEventListener('click', function(e) {
   }
 });
 
+// ==========================================
+// THEME SWITCHER (LIGHT & DARK MODE)
+// ==========================================
+window.initTheme = function() {
+  const savedTheme = localStorage.getItem('maximo_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  updateThemeUI(savedTheme);
+};
+
+window.toggleTheme = function() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('maximo_theme', newTheme);
+  updateThemeUI(newTheme);
+};
+
+function updateThemeUI(theme) {
+  const icon = document.getElementById('theme-toggle-icon');
+  const label = document.getElementById('dropdown-theme-label');
+  const isDark = theme === 'dark';
+
+  if (icon) {
+    icon.textContent = isDark ? '🌙' : '☀️';
+  }
+  if (label) {
+    label.textContent = isDark ? '☀️ Switch to Light Mode' : '🌙 Switch to Dark Mode';
+  }
+}
+
 // Initial load
 (async () => {
+  initTheme();
+  initMatrixDigitalRain();
   const isAuthed = await checkAuth();
   if (isAuthed) {
     await loadContext();
     await loadUserConversations();
   }
 })();
+
+// --- Streams of Glowing Green Characters Background Animation (Matrix Rain) ---
+function initMatrixDigitalRain() {
+  const canvas = document.getElementById('matrix-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  let width = (canvas.width = window.innerWidth);
+  let height = (canvas.height = window.innerHeight);
+
+  // High-tech characters: Katakana, Cyrillic, Greek, Numbers & Hex glyphs
+  const chars = '0123456789ABCDEFΞΨΩΣΠΔλθφψαβγδε010101アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン';
+  const fontSize = 14;
+  let columns = Math.floor(width / fontSize);
+  let drops = [];
+
+  function resetDrops() {
+    columns = Math.floor(width / fontSize);
+    drops = [];
+    for (let i = 0; i < columns; i++) {
+      // Stagger initial drop positions randomly above the screen
+      drops[i] = Math.floor(Math.random() * -100);
+    }
+  }
+  resetDrops();
+
+  window.addEventListener('resize', () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    resetDrops();
+  });
+
+  let lastFrameTime = 0;
+  const fpsInterval = 1000 / 30; // 30 FPS for optimal performance & classic Matrix pace
+
+  function renderMatrix(currentTime) {
+    requestAnimationFrame(renderMatrix);
+
+    const elapsed = currentTime - lastFrameTime;
+    if (elapsed < fpsInterval) return;
+    lastFrameTime = currentTime - (elapsed % fpsInterval);
+
+    // Semi-transparent fade layer to create character motion trails
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    ctx.fillStyle = isLight ? 'rgba(248, 250, 252, 0.08)' : 'rgba(11, 17, 32, 0.08)';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.font = `${fontSize}px monospace`;
+
+    for (let i = 0; i < drops.length; i++) {
+      const text = chars.charAt(Math.floor(Math.random() * chars.length));
+      const x = i * fontSize;
+      const y = drops[i] * fontSize;
+
+      if (y > 0 && y < height + fontSize) {
+        // Glowing leading character (bright lime/white highlight)
+        ctx.save();
+        ctx.fillStyle = '#bbf7d0'; // luminous bright green head
+        ctx.shadowColor = '#22c55e';
+        ctx.shadowBlur = 8;
+        ctx.fillText(text, x, y);
+        ctx.restore();
+
+        // Trail character
+        ctx.fillStyle = isLight ? '#15803d' : '#22c55e';
+        ctx.fillText(text, x, y - fontSize);
+      }
+
+      // Reset drop to top once it falls past bottom with random delay
+      if (y > height && Math.random() > 0.975) {
+        drops[i] = 0;
+      }
+
+      drops[i]++;
+    }
+  }
+
+  requestAnimationFrame(renderMatrix);
+}
 
 
 

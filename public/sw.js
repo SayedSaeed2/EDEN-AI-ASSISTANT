@@ -1,5 +1,5 @@
 // Service Worker for IBM Maximo EAM Assistant PWA
-const CACHE_NAME = 'maximo-eam-cache-v8';
+const CACHE_NAME = 'maximo-eam-cache-v17';
 const STATIC_ASSETS = [
   '/',
   '/login.html',
