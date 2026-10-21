@@ -24,8 +24,10 @@ export const authController = {
       exp
     });
 
-    // Set secure cookie
-    res.setHeader('Set-Cookie', `maximo_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`);
+    // Set secure cookie (detect HTTPS directly or through Cloudflare / reverse proxy)
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const secureFlag = isHttps ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `maximo_token=${token}; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=${7 * 24 * 60 * 60}`);
 
     return res.json({
       success: true,

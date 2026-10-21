@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import { Ollama } from 'ollama';
 import { config } from './config/index.js';
-import { toolsSchema } from './services/tools.js';
+import { toolsSchema, getActiveToolsSchema } from './services/tools.js';
+import { mcpClientManager } from './services/mcpClientService.js';
 import { chatController } from './controllers/chatController.js';
 import { maximoController } from './controllers/maximoController.js';
 
@@ -10,8 +11,10 @@ import { authController } from './controllers/authController.js';
 import { requireAuthApi, requireAuthPage } from './middleware/auth.js';
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Public Auth Endpoints (before static and protected routes)
 app.post('/api/auth/login', (req, res) => authController.login(req, res));
@@ -51,7 +54,14 @@ const upload = multer({
 
 import { conversationService } from './services/conversationService.js';
 
+import { skillService } from './services/skillService.js';
+
 // Protected API Routes
+app.get('/api/skills', requireAuthApi, (req, res) => {
+  const userRole = req.user?.role || 'user';
+  const skills = skillService.getSkillsForUser(userRole);
+  res.json({ success: true, skills });
+});
 app.get('/api/context', requireAuthApi, (req, res) => maximoController.getContext(req, res));
 app.get('/api/memory', requireAuthApi, (req, res) => chatController.getMemory(req, res));
 app.post('/api/memory/reset', requireAuthApi, (req, res) => chatController.resetMemory(req, res));
@@ -88,7 +98,11 @@ app.put('/api/conversations/:id/active', requireAuthApi, (req, res) => {
 
 app.delete('/api/conversations/:id', requireAuthApi, (req, res) => {
   const username = req.user?.username || 'admin';
-  const result = conversationService.deleteConversation(username, req.params.id);
+  const convId = req.params.id;
+  const result = conversationService.deleteConversation(username, convId);
+  try {
+    ragService.deleteConversationDocs(convId);
+  } catch (_) {}
   res.json(result);
 });
 
@@ -106,7 +120,9 @@ app.put('/api/conversations/:id/rename', requireAuthApi, (req, res) => {
 // Technical Knowledge Base & RAG Endpoints
 app.get('/api/docs', requireAuthApi, (req, res) => {
   try {
-    const docs = ragService.listDocuments();
+    const { conversationId } = req.query;
+    const username = req.user?.username || 'admin';
+    const docs = ragService.listDocuments(conversationId || null, username);
     res.json({ success: true, count: docs.length, documents: docs });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -116,8 +132,19 @@ app.get('/api/docs', requireAuthApi, (req, res) => {
 app.post('/api/docs/upload', requireAuthApi, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No document file provided.' });
-    const result = await ragService.indexFile(req.file.path, req.file.originalname);
-    res.json({ success: true, message: `Successfully extracted and indexed ${result.chunkCount} passages from ${result.fileName}.`, ...result });
+    const conversationId = req.body?.conversationId || 'global';
+    const username = req.user?.username || 'admin';
+    // Correct Arabic and non-ASCII filenames from multipart encoding
+    let originalName = req.file.originalname;
+    try {
+      originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    } catch (_) {}
+    const result = await ragService.indexFile(req.file.path, originalName, conversationId, username);
+    res.json({ 
+      success: true, 
+      message: `Successfully extracted and indexed ${result.chunkCount} passages from ${result.fileName}${conversationId !== 'global' ? ' for this conversation' : ''}.`, 
+      ...result 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -134,7 +161,9 @@ app.post('/api/docs/sync', requireAuthApi, async (req, res) => {
 
 app.delete('/api/docs/:name', requireAuthApi, (req, res) => {
   try {
-    const result = ragService.deleteDocument(req.params.name);
+    const { conversationId } = req.query;
+    const username = req.user?.username || 'admin';
+    const result = ragService.deleteDocument(req.params.name, conversationId || null, username);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -142,10 +171,17 @@ app.delete('/api/docs/:name', requireAuthApi, (req, res) => {
 });
 
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, async () => {
+  // Initialize external MCP server connections from mcp_config.json
+  await mcpClientManager.initialize();
   console.log(`=========================================`);
   console.log(`Maximo AI Agent running at http://localhost:${config.port}`);
   console.log(`Model: ${config.ollama.model} via Ollama`);
   console.log(`Registered Tools: ${toolsSchema.length}`);
   console.log(`=========================================`);
 });
+
+// Configure generous timeouts (5 minutes) for long RAG and LLM syntheses
+server.timeout = 300000;
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;

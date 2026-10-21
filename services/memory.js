@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getDefaultSite } from './maximo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,7 +42,7 @@ class MemoryService {
           createdAt: new Date().toISOString(),
           lastActive: new Date().toISOString(),
           workingContext: {
-            activeSite: 'TEST',
+            activeSite: getDefaultSite(),
             lastMentionedAsset: null,
             lastMentionedLocation: null,
             lastMentionedDepartment: null,
@@ -114,7 +115,7 @@ class MemoryService {
         createdAt: new Date().toISOString(),
         lastActive: new Date().toISOString(),
         workingContext: {
-          activeSite: 'TEST',
+          activeSite: getDefaultSite(),
           lastMentionedAsset: null,
           lastMentionedLocation: null,
           lastMentionedDepartment: null,

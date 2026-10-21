@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/icons/icon.svg">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="/css/style.css?v=43">
+  <link rel="stylesheet" href="/css/style.css?v=63">
   <!-- Markdown Parser -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- Export Libraries: SheetJS (Excel) & jsPDF (PDF Reports) -->
@@ -25,27 +25,35 @@
 </head>
 <body>
 
-  <!-- Fullscreen Glowing Green Matrix Characters Canvas -->
-  <canvas id="matrix-canvas" aria-hidden="true"></canvas>
   <header>
     <div class="brand">
-      <div class="badge-icon" style="background: linear-gradient(135deg, #0f4876 0%, #248acc 100%); font-weight: 800; font-size: 15px; letter-spacing: 0.5px; border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 0 12px rgba(36, 138, 204, 0.4);">EFM</div>
-      <div>
-        <div style="font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px;">
-          <span>Eden FM Assistant</span>
-          <span style="font-size: 10px; color: #38bdf8; font-weight: 600; background: rgba(15, 72, 118, 0.45); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(36, 138, 204, 0.35);">Hassan Allam Holding</span>
-          <span class="online-tag">Online</span>
-        </div>
-        <div class="subtitle">Smart Facilities, Energy & Asset Operations Copilot</div>
+      <div style="display: flex; align-items: center;">
+        <img src="/icons/eden.png" alt="Eden Facility Management" class="header-logo-img">
+      </div>
+      <div class="brand-titles">
+        <div class="brand-title">AI Operations Copilot</div>
+        <div class="subtitle">Smart Facilities &amp; Asset Management</div>
       </div>
     </div>
     
     <div class="header-controls">
-      <div class="desktop-controls" style="display: flex; align-items: center; gap: 10px;">
-        <label for="site-select" style="font-size: 12px; color: #94a3b8; font-weight: 500;">Site:</label>
-        <select id="site-select" class="site-select">
-          <option value="">Loading sites...</option>
-        </select>
+      <div class="desktop-controls">
+        <div class="control-group">
+          <span class="control-label">Server</span>
+          <select id="server-select" class="site-select" onchange="handleServerChange(this.value)">
+            <option value="ED">Eden ED</option>
+            <option value="GEM">Eden GEM</option>
+            <!-- <option value="MD">Eden MD</option> -->
+          </select>
+        </div>
+
+        <div class="control-group">
+          <span class="control-label">Site</span>
+          <select id="site-select" class="site-select">
+            <option value="">Loading sites...</option>
+          </select>
+        </div>
+
         <button id="btn-new-chat" onclick="handleNewChat()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 12px; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 4px;" title="Start a fresh chat thread">
           <span>➕</span> <span>New Chat</span>
         </button>
@@ -80,10 +88,18 @@
       </div>
     </div>
 
-    <!-- Mobile-only Site Switcher -->
+    <!-- Mobile-only Server & Site Switcher -->
     <div class="dropdown-menu-item mobile-only-item">
-      <label for="site-select-mobile" style="font-size: 11.5px; color: #94a3b8; font-weight: 600;">Active Site:</label>
-      <select id="site-select-mobile" class="site-select" style="width: 100%; margin-top: 4px;" onchange="syncMobileSite(this.value)">
+      <label for="server-select-mobile" style="font-size: 11px; color: #38bdf8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Server Instance:</label>
+      <select id="server-select-mobile" class="site-select mobile-server-select" style="width: 100%; margin-top: 4px;" onchange="handleServerChange(this.value)">
+        <option value="ED">Eden ED</option>
+        <option value="GEM">Eden GEM</option>
+      </select>
+    </div>
+
+    <div class="dropdown-menu-item mobile-only-item">
+      <label for="site-select-mobile" style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px;">Active Site:</label>
+      <select id="site-select-mobile" class="site-select mobile-site-select" style="width: 100%; margin-top: 4px;" onchange="syncMobileSite(this.value)">
         <option value="">Loading sites...</option>
       </select>
     </div>
@@ -107,6 +123,17 @@
 
     <button class="dropdown-menu-btn" onclick="handleNewChat(); toggleAppMenu();">
       <span>➕ Start Fresh Conversation</span>
+    </button>
+
+    <div class="dropdown-menu-divider"></div>
+    <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 10px;">🌐 Multi-Server Federation (ED + GEM)</div>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('How many total assets across all servers? Give me consolidated totals and server breakdown.'); toggleAppMenu();">
+      <span>🌐 Total Assets Across All Servers</span>
+    </button>
+
+    <button class="dropdown-menu-btn" onclick="sendPrompt('Generate a consolidated executive portfolio summary across all servers (ED, GEM)'); toggleAppMenu();">
+      <span>🏢 Portfolio Summary (ED + GEM)</span>
     </button>
 
     <div class="dropdown-menu-divider"></div>
@@ -160,43 +187,38 @@
       <main id="chat-box">
         <div class="msg-row">
           <div class="bubble bubble-agent">
-            <p>Welcome to <strong>Eden FM Assistant</strong> (Hassan Allam Holding). Operating in Facilities & Energy Management since 2011 with 90% self-executed operations. How can I assist with your site operations or asset maintenance today?</p>
-            
-            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #38bdf8; font-weight: 700; margin-top: 14px;">👔 Top Management & Executive Analytics</div>
-            <div class="btn-group" style="margin-top: 8px;">
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite: Executive Audit Brief Memo</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk: Asset Criticality & Vulnerability Matrix</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League: All Sites</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide budget variance analysis and OPEX financial health')">📊 Budget: Variance & OPEX Health</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide contractor and vendor SLA compliance scorecard')">🤝 Vendors: SLA Compliance League</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide asset lifecycle and CAPEX replacement renewal forecast')">🏗️ Assets: CAPEX Replacement Forecast</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide executive maintenance cost and spend breakdown (Labor, Material, Contractors, Tools)')">💰 Spend: Cost Breakdown</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Provide reliability analysis: MTTR, Proactive vs Reactive maintenance ratio, and Top Bad Actor assets')">📈 Reliability: MTTR & Bad Actors</button>
-              <button class="btn-quick btn-exec" onclick="sendPrompt('Analyze backlog aging distribution (<7d, 7-30d, 30-90d, >90d) and stagnant risk')">⏳ Backlog: Aging Bands</button>
+            <div style="margin-bottom: 12px;">
+              <h2 style="font-size: 26px; font-weight: 600; background: var(--gemini-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 4px; letter-spacing: -0.5px;">
+                ✦ Hello
+              </h2>
+              <p style="font-size: 14.5px; color: var(--text-dim); margin-top: 2px;">
+                How can I assist with your Maximo operations and plant equipment today?
+              </p>
             </div>
 
-            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 700; margin-top: 14px;">📋 Plant Operations & Maintenance</div>
-            <div class="btn-group" style="margin-top: 8px;">
-              <button class="btn-quick" onclick="sendPrompt('Provide full executive maintenance KPI dashboard summary')">📊 KPI: Maintenance Dashboard</button>
-              <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Alerts: Overdue Work Orders</button>
-              <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Stock: Low Inventory Alerts</button>
-              <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Read: Open Work Orders</button>
-              <button class="btn-quick" onclick="sendPrompt('Show unplanned work orders for all sites')">🚨 Unplanned: CM & EM Work Orders</button>
-              <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ Write: New Work Order (Prompt for Dept/Type)</button>
-              <button class="btn-quick" onclick="sendPrompt('Show machine card for asset ASSET124')">🏷️ Machine Card: Asset Passport & History</button>
-              <button class="btn-quick" onclick="sendPrompt('How many assets are registered in the active site?')">🏷️ Assets: Total Asset Count</button>
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent-blue); font-weight: 700; margin: 16px 0 6px 2px;">⚡ Frequent Operations</div>
+            <div class="btn-group">
+              <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Open WOs</button>
+              <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Overdue WOs</button>
+              <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Low Stock Alerts</button>
+              <button class="btn-quick" onclick="sendPrompt('Show machine card for asset ASSET124')">🏷️ Machine Card</button>
+              <button class="btn-quick" onclick="sendPrompt('Show PPM schedule forecast based on forecast date')">🗓️ PPM Forecast</button>
+              <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ New Work Order</button>
             </div>
           </div>
         </div>
       </main>
 
       <footer>
+        <!-- Slash Command Autocomplete Popup -->
+        <div id="slash-commands-popup" class="slash-commands-popup" style="display: none;"></div>
+
         <form class="input-wrap" id="chat-form">
           <input type="file" id="doc-file-input" accept=".pdf,.txt,.md" style="display: none;" onchange="handleFileUpload(event)">
           <button type="button" id="btn-upload-doc" class="btn-voice" onclick="document.getElementById('doc-file-input').click()" title="Upload PDF Manual / SOP / Policy">📎</button>
           <button type="button" id="voice-btn" class="btn-voice" onclick="toggleVoiceInput()" title="Voice Dictation (Tap to Start / Stop)">🎤</button>
           <button type="button" id="btn-voice-lang" class="btn-voice-lang" onclick="toggleVoiceLanguage()" title="Switch Dictation Language (AR / EN)">AR</button>
-          <input id="user-input" type="text" placeholder="Type or speak a message..." autocomplete="off">
+          <input id="user-input" type="text" placeholder="Type or speak a message... (Type / for Skills)" autocomplete="off">
           <button type="submit" id="send-btn" title="Send Message">➤</button>
         </form>
       </footer>
@@ -215,10 +237,14 @@
       
       <div class="sidebar-tabs">
         <button class="tab-btn active" data-tab="chats" onclick="switchTab('chats')">💬 Chats</button>
+        <button class="tab-btn" data-tab="skills" onclick="switchTab('skills')">⚡ Skills</button>
         <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">Assets</button>
         <button class="tab-btn" data-tab="locations" onclick="switchTab('locations')">Locations</button>
         <button class="tab-btn" data-tab="documents" onclick="switchTab('documents')">📚 Docs (RAG)</button>
       </div>
+
+      <!-- Real-time Status KPI Bar (100% of Site / Server Database) -->
+      <div id="status-kpi-bar" class="status-kpi-bar" style="display: none;"></div>
 
       <div class="sidebar-search">
         <input type="text" id="sidebar-search" placeholder="Filter by tag or description...">
@@ -232,6 +258,6 @@
   </div>
 
   <!-- Client Application Script -->
-  <script src="/js/app.js?v=43"></script>
+  <script src="/js/app.js?v=66"></script>
 </body>
 </html>

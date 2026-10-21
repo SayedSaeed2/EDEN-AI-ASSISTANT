@@ -26,5 +26,26 @@
     "displayName": "TEST Plant Technician",
     "role": "technician",
     "allowedSites": ["TEST"]
+  },
+  {
+    "username": "Eng.Amgad",
+    "password": "Test12345",
+    "displayName": "System Administrator",
+    "role": "admin",
+    "allowedSites": ["*"]
+  },
+  {
+    "username": "Eng.Mokhtar",
+    "password": "Test12345",
+    "displayName": "System Administrator",
+    "role": "admin",
+    "allowedSites": ["*"]
+  },
+  {
+    "username": "Eng.Hamdy",
+    "password": "Test12345",
+    "displayName": "System Administrator",
+    "role": "admin",
+    "allowedSites": ["*"]
   }
 ]

@@ -1,0 +1,71 @@
+{
+  "activeConversationId": "conv_1792507676474_v27ar",
+  "conversations": [
+    {
+      "id": "conv_1792507676474_v27ar",
+      "title": "/my-tickets",
+      "site": "TEST",
+      "createdAt": "2026-10-20T14:47:56.474Z",
+      "updatedAt": "2026-10-20T15:15:13.023Z",
+      "messages": [
+        {
+          "role": "user",
+          "content": "/my-tickets"
+        },
+        {
+          "role": "assistant",
+          "content": "Here is the list of **Work Orders**:\n\n| WONUM | Description | Type | Status | Asset | Location | Site | Report Date |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n| **WO-534483** | Corrective Maintenance for AHU-CHW-008 (MECH) | `CM` | `WAPPR` | AHU-CHW-008 | MASA-B02-T1-G-MECHAHU004 | REGALH-G1 | 2026-10-20 |\n| **WO-534424** | Preventive Maintenance for  Air Handling Unit AHU-R-02 | `PM` | `WAPPR` | AHU-CHW-002 | MASA-B02-T1-R | REGALH-G1 | 2024-12-16 |\n| **WO-529916** | Preventive Maintenance for  main distribution board TOWER 2 | `PM` | `WAPPR` | MDB-00-002 | MASA-B02-T2-G-MDB | REGALH-G1 | 2024-10-30 |\n| **WO-529901** | Preventive Maintenance for  Motor Control Center -   MCC-B1-P01 - AHU for Corridors / Fish / Khed & The View Restaurants | `PM` | `WAPPR` | MCC-CNTP-034 | MASA-B02-T1-F1-MECHAHU001 | REGALH-G1 | 2024-10-30 |\n\n*Total Records Displayed: 4 Work Orders.*\n"
+        },
+        {
+          "role": "user",
+          "content": "/finish-wo WO-534483"
+        },
+        {
+          "role": "assistant",
+          "content": "To complete the work order (WO) for WO-534483, we need to ensure that all necessary steps are taken. Here's a summary of what needs to be done:\n\n1. **Review and Confirm Work Order Status**: Ensure that the current status of WO-534483 is \"Open\" or \"Pending\". If it is not, update the status accordingly.\n\n2. **Check for Any Open Tasks or Backlogs**: Look into any open tasks or backlogs related to this work order. This might include items like:\n   - Scheduled maintenance tasks that have not been completed.\n   - Work orders that are due but not yet closed.\n   - Items in the backlog that need to be addressed.\n\n3. **Review and Approve Backlog Tasks**: If there are any open tasks or backlogs, review them to ensure they meet the criteria for closure (e.g., all required corrective actions have been completed).\n\n4. **Close Open Work Orders**: Once you've reviewed and approved any open tasks or backlogs, close these work orders.\n\n5. **Update System Records**: After closing the work orders, update the system records to reflect that they are now closed.\n\n6. **Notify Stakeholders**: Inform relevant stakeholders about the completion of the work order, including updates on any issues resolved during the process and any remaining tasks or backlogs.\n\n7. **Document the Process**: Document the steps taken in this process for future reference and improvement.\n\nIf you need further assistance with any specific part of these steps, please let me know!"
+        },
+        {
+          "role": "user",
+          "content": "Close it"
+        },
+        {
+          "role": "assistant",
+          "content": "None of the provided functions require any arguments."
+        },
+        {
+          "role": "user",
+          "content": "/finish-wo WO-534483 close it"
+        },
+        {
+          "role": "assistant",
+          "content": "To complete the work order (WO) -534483, please provide the necessary details such as the reason for closure and any specific actions that need to be taken. This information will help ensure a smooth closure of the work order in Maximo Asset Maintenance System (MAM)."
+        },
+        {
+          "role": "user",
+          "content": "Work has finished"
+        },
+        {
+          "role": "assistant",
+          "content": "The work is now complete. If you have any further requests or need assistance, feel free to ask!"
+        },
+        {
+          "role": "user",
+          "content": "Give me details of this work order"
+        },
+        {
+          "role": "assistant",
+          "content": "Here is the list of **Work Orders**:\n\n| WONUM | Description | Type | Status | Asset | Location | Site | Report Date |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n| **WO-499931** | Corrective Maintenance for ASSET1245 (MECH)  test | `CM` | `WAPPR` | ASSET1245 | TESTLOC | TEST | 2026-10-19 |\n| **WO-499928** | Work order for TEST_STATUS_01 | `CM` | `WAPPR` | TEST_STATUS_01 | TESTLOC | TEST | 2026-10-15 |\n| **WO-499927** | Work order for ASSET124 | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-15 |\n| **WO-499926** | Work order for ASSET124 | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-15 |\n| **WO-499925** | Work order for TEST_STATUS | `CM` | `WAPPR` | TEST_STATUS | TESTLOC | TEST | 2026-10-10 |\n| **WO-499924** | Issue with HVAC system | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-09 |\n| **WO-499923** | Work order for ASSET124 | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-08 |\n| **WO-499922** | Work order for TEST_STATUS | `CM` | `WAPPR` | TEST_STATUS | TESTLOC | TEST | 2026-10-08 |\n| **WO-499921** | Work order for ASSET124 | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-08 |\n| **WO-499920** | N/A | `CM` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-06 |\n| **WO-499919** | HVAC Compressor Vibration Inspection and Repair | `CM` | `WAPPR` | N/A | N/A | TEST | 2026-10-06 |\n| **WO-499918** | dssd | `CM` | `WAPPR` | TEST_STATUS | TESTLOC | TEST | 2026-10-05 |\n| **WO-499915** | HVAC Compressor Failure - Check and repair | `WORK` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-05 |\n| **WO-499913** | Damage to asset detected | `WORK` | `WAPPR` | ASSET124 | TESTLOC | TEST | 2026-10-01 |\n| **WO-499912** | TEST Script | `PM` | `WAPPR` | TESTASSET | TESTLOC | TEST | 2026-08-30 |\n\n*Total Records Displayed: 15 Work Orders.*\n"
+        },
+        {
+          "role": "user",
+          "content": "This work order WO-534483"
+        },
+        {
+          "role": "assistant",
+          "content": "To provide you with the appropriate information for your work order, I need to know what specific details or data points are required. Could you please specify which functions or parameters from the list above you would like to use? For example:\n\n1. A function related to maintenance cost as % of RAV.\n2. A function that calculates ISO 55001 Pillar 3 Financial & Lifecycle KPIs.\n3. A function for calculating ISO 55001 Pillar 4 MRO Inventory KPIs.\n\nOnce you provide the details, I can generate a JSON object with the appropriate arguments for each function call.",
+          "executedTools": []
+        }
+      ]
+    }
+  ]
+}

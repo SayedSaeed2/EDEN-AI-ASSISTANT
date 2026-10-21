@@ -18,7 +18,7 @@ const dataDir = path.dirname(INDEX_FILE);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const ollama = new Ollama({ host: config.ollama.host });
-// Default embedding model: nomic-embed-text (or fallback to basic TF-IDF / term vectors if model not loaded)
+// Embedding model: use nomic-embed-text (fast dedicated 137M vector embedder)
 const EMBED_MODEL = process.env.EMBEDDING_MODEL || 'nomic-embed-text';
 
 function cosineSimilarity(vecA, vecB) {
@@ -77,14 +77,35 @@ export const ragService = {
     fs.writeFileSync(INDEX_FILE, JSON.stringify(indexData, null, 2), 'utf8');
   },
 
-  // Get list of indexed documents
-  listDocuments() {
+  // Get list of indexed documents (filtered by conversation and user privacy)
+  listDocuments(conversationId = null, username = null) {
     const index = this.loadIndex();
-    return index.documents.map(d => ({
+    const docs = index.documents || [];
+    const filtered = docs.filter(d => {
+      // Global organization docs are accessible to everyone
+      const isGlobal = !d.conversationId || d.conversationId === 'global';
+      if (isGlobal) return true;
+
+      // If document was uploaded by a user, ensure it belongs to the requesting user
+      if (d.uploadedBy && username && d.uploadedBy !== username) {
+        return false;
+      }
+
+      // If conversationId is specified, match it
+      if (conversationId) {
+        return d.conversationId === conversationId;
+      }
+
+      return true;
+    });
+
+    return filtered.map(d => ({
       name: d.name,
       sizeBytes: d.sizeBytes,
       chunkCount: d.chunkCount,
-      indexedAt: d.indexedAt
+      indexedAt: d.indexedAt,
+      conversationId: d.conversationId || 'global',
+      uploadedBy: d.uploadedBy || 'system'
     }));
   },
 
@@ -93,17 +114,17 @@ export const ragService = {
     try {
       const res = await ollama.embeddings({
         model: EMBED_MODEL,
-        prompt: text.slice(0, 1500)
+        prompt: text.slice(0, 2000)
       });
       return res.embedding;
     } catch (err) {
-      // Graceful term-vector fallback if nomic-embed-text isn't pulled yet
+      // Graceful term-vector fallback if model isn't pulled yet
       return null;
     }
   },
 
-  // Ingest and index a single file
-  async indexFile(filePath, originalName) {
+  // Ingest and index a single file with optional conversationId and user scope
+  async indexFile(filePath, originalName, conversationId = 'global', username = 'system') {
     const fileName = originalName || path.basename(filePath);
     let extractedText = '';
 
@@ -118,35 +139,47 @@ export const ragService = {
       extractedText = fs.readFileSync(filePath, 'utf8');
     }
 
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw new Error(`Document ${fileName} contained no extractable text.`);
+    // Check for scanned / empty PDFs that only contain page number markers (e.g. "-- 1 of 42 --")
+    const substantiveText = extractedText.replace(/--\s*\d+\s+of\s+\d+\s*--/g, '').trim();
+    if (!substantiveText || substantiveText.length < 50) {
+      throw new Error(`The document "${fileName}" appears to be a scanned PDF (image-only) with no selectable text. Please upload a PDF with an embedded text (OCR) layer.`);
     }
 
     const chunks = chunkText(extractedText, fileName);
-    console.log(`[RAG] Extracted ${chunks.length} chunks from ${fileName}`);
+    console.log(`[RAG] Extracted ${chunks.length} chunks from ${fileName} (Conversation: ${conversationId}, User: ${username})`);
 
-    // Compute embeddings for each chunk
-    for (const chunk of chunks) {
-      chunk.embedding = await this.getEmbedding(chunk.content);
+    // Compute embeddings for chunks in concurrent batches
+    const BATCH_SIZE = 8;
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (chunk) => {
+          chunk.conversationId = conversationId;
+          chunk.uploadedBy = username;
+          chunk.embedding = await this.getEmbedding(chunk.content);
+        })
+      );
     }
 
     // Update global index
     const index = this.loadIndex();
-    // Remove previous version of doc if exists
-    index.documents = index.documents.filter(d => d.name !== fileName);
-    index.chunks = index.chunks.filter(c => c.docName !== fileName);
+    // Remove previous version of doc if exists within the same scope
+    index.documents = (index.documents || []).filter(d => !(d.name === fileName && (d.conversationId || 'global') === conversationId && (d.uploadedBy || 'system') === username));
+    index.chunks = (index.chunks || []).filter(c => !(c.docName === fileName && (c.conversationId || 'global') === conversationId && (c.uploadedBy || 'system') === username));
 
     const stat = fs.statSync(filePath);
     index.documents.push({
       name: fileName,
       sizeBytes: stat.size,
       chunkCount: chunks.length,
-      indexedAt: new Date().toISOString()
+      indexedAt: new Date().toISOString(),
+      conversationId: conversationId || 'global',
+      uploadedBy: username || 'system'
     });
     index.chunks.push(...chunks);
 
     this.saveIndex(index);
-    return { fileName, chunkCount: chunks.length };
+    return { fileName, chunkCount: chunks.length, conversationId, uploadedBy: username };
   },
 
   // Scan and index all files in knowledge_docs/ folder
@@ -157,7 +190,7 @@ export const ragService = {
       const fullPath = path.join(DOCS_DIR, f);
       if (fs.statSync(fullPath).isFile()) {
         try {
-          const res = await this.indexFile(fullPath, f);
+          const res = await this.indexFile(fullPath, f, 'global', 'system');
           results.push({ name: f, status: 'indexed', chunks: res.chunkCount });
         } catch (e) {
           results.push({ name: f, status: 'error', error: e.message });
@@ -167,23 +200,44 @@ export const ragService = {
     return results;
   },
 
-  // Delete a document from the index
-  deleteDocument(fileName) {
+  // Delete a document from the index with owner check
+  deleteDocument(fileName, conversationId = null, username = null) {
     const index = this.loadIndex();
-    index.documents = index.documents.filter(d => d.name !== fileName);
-    index.chunks = index.chunks.filter(c => c.docName !== fileName);
+    index.documents = (index.documents || []).filter(d => {
+      if (d.name !== fileName) return true;
+      if (conversationId && d.conversationId && d.conversationId !== conversationId) return true;
+      if (username && d.uploadedBy && d.uploadedBy !== 'system' && d.uploadedBy !== username) return true;
+      return false;
+    });
+    index.chunks = (index.chunks || []).filter(c => {
+      if (c.docName !== fileName) return true;
+      if (conversationId && c.conversationId && c.conversationId !== conversationId) return true;
+      if (username && c.uploadedBy && c.uploadedBy !== 'system' && c.uploadedBy !== username) return true;
+      return false;
+    });
     this.saveIndex(index);
 
-    // Also delete from knowledge_docs if exists
-    const diskPath = path.join(DOCS_DIR, fileName);
-    if (fs.existsSync(diskPath)) {
-      try { fs.unlinkSync(diskPath); } catch (_) {}
+    // If global doc, also clean from knowledge_docs
+    if (!conversationId || conversationId === 'global') {
+      const diskPath = path.join(DOCS_DIR, fileName);
+      if (fs.existsSync(diskPath)) {
+        try { fs.unlinkSync(diskPath); } catch (_) {}
+      }
     }
     return { success: true, deleted: fileName };
   },
 
-  // Search knowledge base for the most relevant excerpts
-  async search(query, topK = 3) {
+  // Delete all documents associated with a deleted conversation thread
+  deleteConversationDocs(conversationId) {
+    if (!conversationId) return;
+    const index = this.loadIndex();
+    index.documents = (index.documents || []).filter(d => d.conversationId !== conversationId);
+    index.chunks = (index.chunks || []).filter(c => c.conversationId !== conversationId);
+    this.saveIndex(index);
+  },
+
+  // Search knowledge base with optional conversationId and user privacy filtering
+  async search(query, topK = 4, conversationId = null, username = null) {
     const index = this.loadIndex();
     if (!index.chunks || index.chunks.length === 0) {
       return {
@@ -194,29 +248,77 @@ export const ragService = {
       };
     }
 
+    // Filter chunks by user authorization & conversation scope:
+    // 1. Never show other users' private uploads
+    let accessibleChunks = index.chunks.filter(c => {
+      if (!c.uploadedBy || c.uploadedBy === 'system') return true;
+      if (username && c.uploadedBy === username) return true;
+      return false;
+    });
+
+    let candidateChunks = accessibleChunks;
+    if (conversationId) {
+      const convChunks = accessibleChunks.filter(c => c.conversationId === conversationId);
+      const globalChunks = accessibleChunks.filter(c => !c.conversationId || c.conversationId === 'global');
+      candidateChunks = convChunks.length > 0 ? [...convChunks, ...globalChunks] : accessibleChunks;
+    }
+
+    if (candidateChunks.length === 0) {
+      return {
+        query,
+        count: 0,
+        results: [],
+        message: 'No documents attached to this conversation or global knowledge base.'
+      };
+    }
+
     const queryEmbedding = await this.getEmbedding(query);
     const scoredChunks = [];
 
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    // Clean query words for Arabic & English keyword matching
+    const queryWords = query
+      .replace(/[؟?.,!،;:()[\]{}"]/g, ' ')
+      .split(/\s+/)
+      .map(w => w.trim().toLowerCase())
+      .filter(w => w.length >= 2);
 
-    for (const chunk of index.chunks) {
-      let score = 0;
+    for (const chunk of candidateChunks) {
+      let vectorScore = 0;
       if (queryEmbedding && chunk.embedding) {
-        score = cosineSimilarity(queryEmbedding, chunk.embedding);
-      } else {
-        // Keyword BM25/TF fallback if embeddings are unavailable
-        const textLower = chunk.content.toLowerCase();
-        let matches = 0;
-        queryWords.forEach(w => {
-          if (textLower.includes(w)) matches++;
-        });
-        score = matches / (queryWords.length || 1);
+        vectorScore = cosineSimilarity(queryEmbedding, chunk.embedding);
       }
+
+      // Keyword match score (TF-IDF approximation)
+      const textLower = chunk.content.toLowerCase();
+      let matches = 0;
+      let exactBonus = 0;
+
+      queryWords.forEach(w => {
+        if (textLower.includes(w)) {
+          matches++;
+          // Give higher weight if term appears multiple times or is a specialized keyword
+          const count = (textLower.match(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+          exactBonus += Math.min(count, 3) * 0.05;
+        }
+      });
+
+      const keywordRatio = queryWords.length > 0 ? (matches / queryWords.length) : 0;
+      const keywordScore = Math.min(1.0, keywordRatio + exactBonus);
+
+      // Prioritize conversation-specific uploads over global docs
+      const scopeMultiplier = (conversationId && chunk.conversationId === conversationId) ? 1.25 : 1.0;
+
+      // Hybrid scoring: 60% semantic embedding + 40% keyword match
+      const finalScore = queryEmbedding && chunk.embedding
+        ? ((vectorScore * 0.6) + (keywordScore * 0.4)) * scopeMultiplier
+        : (keywordScore) * scopeMultiplier;
 
       scoredChunks.push({
         docName: chunk.docName,
+        conversationId: chunk.conversationId || 'global',
         content: chunk.content,
-        score: Math.round(score * 100) / 100
+        score: Math.round(finalScore * 100) / 100,
+        isChatSpecific: chunk.conversationId === conversationId
       });
     }
 
@@ -227,6 +329,7 @@ export const ragService = {
     return {
       query,
       count: topResults.length,
+      conversationId,
       results: topResults
     };
   }

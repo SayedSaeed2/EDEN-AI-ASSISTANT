@@ -11,42 +11,44 @@ let currentContext = { sites: [], assets: [], locations: [] };
 let activeTab = 'chats';
 let currentConversationId = null;
 let userConversations = [];
+let currentUser = null;
 
 // Initialize context from backend
-async function loadContext(siteId = '') {
+async function loadContext(siteId = '', instanceKey = '') {
   try {
-    const url = siteId ? `/api/context?siteid=${encodeURIComponent(siteId)}` : '/api/context';
+    const serverEl = document.getElementById('server-select');
+    const targetInst = instanceKey || (serverEl ? serverEl.value : '') || 'ED';
+    let url = `/api/context?instance=${encodeURIComponent(targetInst)}`;
+    if (siteId) url += `&siteid=${encodeURIComponent(siteId)}`;
+
     console.log('[loadContext] Fetching context from:', url);
     const res = await fetch(url);
     currentContext = await res.json();
-    console.log('[loadContext] Received sites:', currentContext.sites);
+    console.log('[loadContext] Received sites for server', targetInst, ':', currentContext.sites);
 
     const el = document.getElementById('site-select') || siteSelect;
     const elMobile = document.getElementById('site-select-mobile');
     const selects = [el, elMobile].filter(Boolean);
 
     if (selects.length > 0) {
-      const currentVal = siteId || currentContext.activeSite || (currentContext.sites?.[0]?.siteid) || 'TEST';
+      const sitesList = Array.isArray(currentContext.sites) && currentContext.sites.length > 0
+        ? currentContext.sites
+        : [{ siteid: 'CAC', description: 'City of Arts and Culture (CAC)', active: true }];
+
+      const currentVal = siteId || currentContext.activeSite || sitesList[0]?.siteid || 'CAC';
 
       selects.forEach(selectEl => {
         selectEl.innerHTML = '';
-        if (Array.isArray(currentContext.sites) && currentContext.sites.length > 0) {
-          currentContext.sites.forEach(s => {
-            const opt = document.createElement('option');
-            const id = typeof s === 'string' ? s : (s.siteid || s.id || '');
-            const desc = typeof s === 'string' ? s : (s.description ? `${id} — ${s.description}` : id);
-            opt.value = id;
-            opt.textContent = desc;
-            if (id === currentVal) opt.selected = true;
-            selectEl.appendChild(opt);
-          });
-          selectEl.value = currentVal;
-        } else {
+        sitesList.forEach(s => {
           const opt = document.createElement('option');
-          opt.value = currentVal;
-          opt.textContent = currentVal;
+          const id = typeof s === 'string' ? s : (s.siteid || s.id || '');
+          const desc = typeof s === 'string' ? s : (s.description ? `${id} — ${s.description}` : id);
+          opt.value = id;
+          opt.textContent = desc;
+          if (id === currentVal) opt.selected = true;
           selectEl.appendChild(opt);
-        }
+        });
+        selectEl.value = currentVal;
 
         // Security UX: If user is restricted to a single site, lock the dropdown
         if (currentContext.sites && currentContext.sites.length === 1 && currentContext.allowedSites && !currentContext.allowedSites.includes('*')) {
@@ -63,6 +65,24 @@ async function loadContext(siteId = '') {
       });
     }
 
+    // Handle Server Select dropdowns (Desktop & Mobile)
+    const serverMobileEl = document.getElementById('server-select-mobile');
+    const serverSelects = [serverEl, serverMobileEl].filter(Boolean);
+
+    if (serverSelects.length > 0 && Array.isArray(currentContext.instances)) {
+      const activeInst = currentContext.activeInstance || targetInst || 'ED';
+      serverSelects.forEach(sel => {
+        sel.innerHTML = '';
+        currentContext.instances.forEach(inst => {
+          const opt = document.createElement('option');
+          opt.value = inst.id;
+          opt.textContent = inst.name || inst.id;
+          if (inst.id === activeInst) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.value = activeInst;
+      });
+    }
     // Update memory chips to reflect active site
     renderMemoryChips({ activeSite: currentContext.activeSite });
 
@@ -73,8 +93,93 @@ async function loadContext(siteId = '') {
   }
 }
 
+// Handler for server instance switching
+window.handleServerChange = async function(instanceKey) {
+  try {
+    console.log('[handleServerChange] Switching active server instance to:', instanceKey);
+    // Reload context for the new instance without forcing previous site
+    await loadContext('', instanceKey);
+    const instName = currentContext.instances?.find(i => i.id === instanceKey)?.name || instanceKey;
+    appendMessage(`Switched active Maximo server to **${instanceKey}** (${instName}). Sites and records have been reloaded.`, 'agent');
+  } catch (err) {
+    console.error('Failed to switch instance:', err);
+  }
+};
+
+// Handler for mobile site selector synchronization
+window.syncMobileSite = function(siteId) {
+  const desktopSiteSelect = document.getElementById('site-select');
+  if (desktopSiteSelect) desktopSiteSelect.value = siteId;
+  loadContext(siteId);
+};
+
+let activeStatusFilter = null;
+
+// Render Real-time Status KPI Bar & Chips covering 100% of records
+function renderStatusKpiBar() {
+  const bar = document.getElementById('status-kpi-bar');
+  if (!bar) return;
+
+  if (activeTab !== 'assets' && activeTab !== 'locations') {
+    bar.style.display = 'none';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  const isAssets = activeTab === 'assets';
+  const data = isAssets ? currentContext.assetStatusBreakdown : currentContext.locationStatusBreakdown;
+
+  if (!data || data.total === undefined) {
+    bar.innerHTML = `<div style="font-size: 11px; color: #94a3b8;">Loading database status telemetry...</div>`;
+    return;
+  }
+
+  const chipsHtml = isAssets ? `
+    <button class="status-chip ${!activeStatusFilter ? 'active' : ''}" onclick="setStatusFilter(null)">
+      All (${data.total || 0})
+    </button>
+    <button class="status-chip ${activeStatusFilter === 'OPERATING' ? 'active' : ''}" onclick="setStatusFilter('OPERATING')">
+      <span class="chip-dot green"></span> Operating (${data.operating || 0})
+    </button>
+    <button class="status-chip ${activeStatusFilter === 'NOT READY' ? 'active' : ''}" onclick="setStatusFilter('NOT READY')">
+      <span class="chip-dot yellow"></span> Not Ready (${data.notReady || 0})
+    </button>
+    <button class="status-chip ${activeStatusFilter === 'DECOMMISSIONED' ? 'active' : ''}" onclick="setStatusFilter('DECOMMISSIONED')">
+      <span class="chip-dot red"></span> Decom (${data.decommissioned || 0})
+    </button>
+  ` : `
+    <button class="status-chip ${!activeStatusFilter ? 'active' : ''}" onclick="setStatusFilter(null)">
+      All (${data.total || 0})
+    </button>
+    <button class="status-chip ${activeStatusFilter === 'OPERATING' ? 'active' : ''}" onclick="setStatusFilter('OPERATING')">
+      <span class="chip-dot green"></span> Operating (${data.operating || 0})
+    </button>
+    <button class="status-chip ${activeStatusFilter === 'DECOMMISSIONED' ? 'active' : ''}" onclick="setStatusFilter('DECOMMISSIONED')">
+      <span class="chip-dot red"></span> Other / Decom (${data.other || 0})
+    </button>
+  `;
+
+  bar.innerHTML = `
+    <div class="kpi-title-row">
+      <span class="kpi-title-label">⚡ 100% Database Status Telemetry</span>
+      <span class="kpi-total-badge">${data.total || 0} Total in Site</span>
+    </div>
+    <div class="kpi-chips-row">
+      ${chipsHtml}
+    </div>
+  `;
+}
+
+window.setStatusFilter = function(filterVal) {
+  activeStatusFilter = filterVal;
+  renderStatusKpiBar();
+  renderSidebarItems();
+};
+
 // Render Assets or Locations in sidebar
 function renderSidebarItems() {
+  renderStatusKpiBar();
+
   const query = (sidebarSearch.value || '').toLowerCase();
   itemsList.innerHTML = '';
 
@@ -83,11 +188,33 @@ function renderSidebarItems() {
   const filtered = items.filter(item => {
     const code = (activeTab === 'assets' ? item.assetnum : item.location) || '';
     const desc = item.description || '';
-    return code.toLowerCase().includes(query) || desc.toLowerCase().includes(query);
+    const st = (item.status || '').toUpperCase();
+
+    // Text search query
+    const matchesQuery = code.toLowerCase().includes(query) || desc.toLowerCase().includes(query);
+    if (!matchesQuery) return false;
+
+    // Status filter chip
+    if (activeStatusFilter) {
+      if (activeStatusFilter === 'OPERATING' && st !== 'OPERATING') return false;
+      if (activeStatusFilter === 'NOT READY' && !st.includes('NOT READY') && !st.includes('LIMITED')) return false;
+      if (activeStatusFilter === 'DECOMMISSIONED' && !st.includes('DECOM') && st === 'OPERATING') return false;
+    }
+
+    return true;
   });
 
+  // Update Tab Count Badges with total database count if available
+  const assetsTab = document.querySelector('.tab-btn[data-tab="assets"]');
+  const locsTab = document.querySelector('.tab-btn[data-tab="locations"]');
+  const totalDbAssets = currentContext.assetStatusBreakdown?.total || currentContext.assets?.length || 0;
+  const totalDbLocs = currentContext.locationStatusBreakdown?.total || currentContext.locations?.length || 0;
+
+  if (assetsTab) assetsTab.textContent = `Assets (${totalDbAssets})`;
+  if (locsTab) locsTab.textContent = `Locations (${totalDbLocs})`;
+
   if (filtered.length === 0) {
-    itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">No ${activeTab} found</div>`;
+    itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">No ${activeTab} found matching filter</div>`;
     return;
   }
 
@@ -97,13 +224,25 @@ function renderSidebarItems() {
     const status = item.status || '';
     const extra = activeTab === 'assets' ? (item.location ? `Loc: ${item.location}` : '') : (item.type || '');
 
+    // Color dot for status
+    let statusClass = 'chip-dot green';
+    const stUpper = status.toUpperCase();
+    if (stUpper.includes('NOT READY') || stUpper.includes('LIMITED') || stUpper.includes('WARN')) {
+      statusClass = 'chip-dot yellow';
+    } else if (stUpper.includes('DECOM') || stUpper.includes('INACTIVE') || stUpper.includes('DOWN')) {
+      statusClass = 'chip-dot red';
+    }
+
     const div = document.createElement('div');
     div.className = 'item-card';
     div.innerHTML = `
       <div class="item-code">${escapeHtml(code)}</div>
       <div class="item-desc" title="${escapeHtml(desc)}">${escapeHtml(desc)}</div>
       <div class="item-meta">
-        <span>${escapeHtml(status)}</span>
+        <span style="display: inline-flex; align-items: center; gap: 4px;">
+          <span class="${statusClass}"></span>
+          ${escapeHtml(status)}
+        </span>
         <span>${escapeHtml(extra)}</span>
       </div>
     `;
@@ -128,7 +267,7 @@ function renderSidebarItems() {
 // Documents cache for RAG
 let indexedDocs = [];
 
-// Switch between Chats, Assets, Locations and Documents tabs
+// Switch between Chats, Skills, Assets, Locations and Documents tabs
 window.switchTab = function(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -136,6 +275,8 @@ window.switchTab = function(tab) {
   });
   if (tab === 'chats') {
     renderConversationsList();
+  } else if (tab === 'skills') {
+    loadSkills();
   } else if (tab === 'documents') {
     loadDocuments();
   } else {
@@ -257,6 +398,8 @@ window.loadConversationThread = async function(convId) {
 
     if (activeTab === 'chats') {
       renderConversationsList();
+    } else if (activeTab === 'documents') {
+      loadDocuments();
     }
   } catch (err) {
     console.error('Failed to load conversation thread:', err);
@@ -287,6 +430,7 @@ window.handleNewChat = async function() {
       history = [];
       appendDefaultWelcomeMessage();
       if (activeTab === 'chats') renderConversationsList();
+      else if (activeTab === 'documents') loadDocuments();
     }
   } catch (err) {
     console.error('Failed to create new chat:', err);
@@ -338,49 +482,63 @@ window.renameConversationThread = async function(convId, oldTitle) {
   }
 };
 
-// Append standard welcome card if new chat
+// Append standard welcome card if new chat (Gemini Style)
 function appendDefaultWelcomeMessage() {
+  const role = (currentUser?.role || 'user').toLowerCase();
+  const isExecutiveOrAdmin = role === 'admin' || role === 'executive';
+  const name = currentUser?.displayName || currentUser?.username || 'Colleague';
+
   const row = document.createElement('div');
   row.className = 'msg-row';
+
+  let execChips = '';
+  if (isExecutiveOrAdmin) {
+    execChips = `
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent-blue); font-weight: 700; margin: 16px 0 6px 2px;">👔 Executive Analytics</div>
+      <div class="btn-group">
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite Memo</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk Matrix</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide budget variance analysis and OPEX financial health')">📊 OPEX Variance</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide contractor and vendor SLA compliance scorecard')">🤝 Vendor SLAs</button>
+        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide asset lifecycle and CAPEX replacement renewal forecast')">🏗️ CAPEX Forecast</button>
+      </div>
+    `;
+  }
+
   row.innerHTML = `
     <div class="bubble bubble-agent">
-      <p>Connected to <strong>IBM Maximo EAM</strong>. Select an operational task or executive analytics report below:</p>
-      
-      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #38bdf8; font-weight: 700; margin-top: 14px;">👔 Top Management & Executive Analytics</div>
-      <div class="btn-group" style="margin-top: 8px;">
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite: Executive Audit Brief Memo</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk: Asset Criticality & Vulnerability Matrix</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Compare all sites: CM ratio, PM compliance, active backlog, MTTR, and RT comparison')">🏆 Reliability League: All Sites</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide budget variance analysis and OPEX financial health')">📊 Budget: Variance & OPEX Health</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide contractor and vendor SLA compliance scorecard')">🤝 Vendors: SLA Compliance League</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide asset lifecycle and CAPEX replacement renewal forecast')">🏗️ Assets: CAPEX Replacement Forecast</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide executive maintenance cost and spend breakdown (Labor, Material, Contractors, Tools)')">💰 Spend: Cost Breakdown</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Provide reliability analysis: MTTR, Proactive vs Reactive maintenance ratio, and Top Bad Actor assets')">📈 Reliability: MTTR & Bad Actors</button>
-        <button class="btn-quick btn-exec" onclick="sendPrompt('Analyze backlog aging distribution (<7d, 7-30d, 30-90d, >90d) and stagnant risk')">⏳ Backlog: Aging Bands</button>
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-size: 26px; font-weight: 600; background: var(--gemini-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 4px; letter-spacing: -0.5px;">
+          ✦ Hello, ${escapeHtml(name)}
+        </h2>
+        <p style="font-size: 14.5px; color: var(--text-dim); margin-top: 2px;">
+          How can I assist with your Maximo operations and plant equipment today?
+        </p>
       </div>
 
-      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 700; margin-top: 14px;">📋 Plant Operations & Maintenance</div>
-      <div class="btn-group" style="margin-top: 8px;">
-        <button class="btn-quick" onclick="sendPrompt('Provide full executive maintenance KPI dashboard summary')">📊 KPI: Maintenance Dashboard</button>
-        <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Alerts: Overdue Work Orders</button>
-        <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Stock: Low Inventory Alerts</button>
-        <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Read: Open Work Orders</button>
-        <button class="btn-quick" onclick="sendPrompt('Show unplanned work orders for all sites')">🚨 Unplanned: CM & EM Work Orders</button>
-        <button class="btn-quick" onclick="sendPrompt('Show PPM schedule forecast based on forecast date')">🗓️ PPM: Preventive Maintenance Forecast</button>
-        <button class="btn-quick" onclick="sendPrompt('Show machine card for asset ASSET124')">🏷️ Machine Card: Asset Passport & History</button>
-        <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ Write: New Work Order (Prompt for Dept/Type)</button>
-        <button class="btn-quick" onclick="sendPrompt('How many assets are registered in the active site?')">🏷️ Assets: Total Asset Count</button>
+      ${execChips}
+
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); font-weight: 700; margin: 16px 0 6px 2px;">⚡ Frequent Operations</div>
+      <div class="btn-group">
+        <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Open WOs</button>
+        <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Overdue WOs</button>
+        <button class="btn-quick" onclick="sendPrompt('Check storeroom inventory for low stock alerts below safety stock')">📦 Low Stock Alerts</button>
+        <button class="btn-quick" onclick="sendPrompt('Show machine card for asset ASSET124')">🏷️ Machine Card</button>
+        <button class="btn-quick" onclick="sendPrompt('Show PPM schedule forecast based on forecast date')">🗓️ PPM Forecast</button>
+        <button class="btn-quick" onclick="sendPrompt('Create a work order for HVAC compressor vibration')">➕ New Work Order</button>
       </div>
     </div>
   `;
   chatBox.appendChild(row);
 }
 
-// Fetch indexed documents from server
+// Fetch indexed documents from server (scoped to current conversation and global)
 async function loadDocuments() {
   itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">Loading technical documents...</div>`;
   try {
-    const res = await fetch('/api/docs');
+    const url = currentConversationId ? `/api/docs?conversationId=${encodeURIComponent(currentConversationId)}` : '/api/docs';
+    const res = await fetch(url);
     const data = await res.json();
     indexedDocs = data.documents || [];
     renderDocumentsList();
@@ -395,10 +553,13 @@ function renderDocumentsList() {
   const query = (sidebarSearch.value || '').toLowerCase();
   itemsList.innerHTML = '';
 
+  const chatSpecificCount = indexedDocs.filter(d => d.conversationId === currentConversationId).length;
+  const globalCount = indexedDocs.filter(d => !d.conversationId || d.conversationId === 'global').length;
+
   const headerDiv = document.createElement('div');
   headerDiv.style.cssText = 'padding: 8px 12px; background: rgba(30, 41, 59, 0.6); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;';
   headerDiv.innerHTML = `
-    <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">📂 Knowledge Docs (${indexedDocs.length})</span>
+    <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">📂 Knowledge Docs (${chatSpecificCount} chat / ${globalCount} org)</span>
     <button onclick="syncFolderDocs()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 10px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">🔄 Sync Folder</button>
   `;
   itemsList.appendChild(headerDiv);
@@ -409,25 +570,30 @@ function renderDocumentsList() {
     const emptyDiv = document.createElement('div');
     emptyDiv.style.cssText = 'text-align: center; color: #64748b; font-size: 12px; padding: 20px;';
     emptyDiv.innerHTML = `
-      <p style="margin-bottom: 8px;">No documents indexed yet.</p>
-      <button onclick="document.getElementById('doc-file-input').click()" style="background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">📎 Upload PDF</button>
-      <p style="font-size: 11px; color: #475569; margin-top: 8px;">or drop files into <code>knowledge_docs/</code></p>
+      <p style="margin-bottom: 8px;">No documents indexed for this chat yet.</p>
+      <button onclick="document.getElementById('doc-file-input').click()" style="background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">📎 Attach PDF to Chat</button>
+      <p style="font-size: 11px; color: #475569; margin-top: 8px;">Files uploaded here belong to this conversation</p>
     `;
     itemsList.appendChild(emptyDiv);
     return;
   }
 
   filtered.forEach(doc => {
+    const isChatDoc = doc.conversationId === currentConversationId;
+    const badgeText = isChatDoc ? '💬 This Chat' : '🌐 Global Org';
+    const badgeBg = isChatDoc ? 'rgba(56, 189, 248, 0.2)' : 'rgba(148, 163, 184, 0.2)';
+    const badgeColor = isChatDoc ? '#38bdf8' : '#94a3b8';
+
     const div = document.createElement('div');
     div.className = 'item-card';
     div.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div class="item-code" style="color: #38bdf8; font-size: 13px;">📄 ${escapeHtml(doc.name)}</div>
-        <button onclick="event.stopPropagation(); deleteDocument('${escapeHtml(doc.name)}')" title="Delete document" style="background: transparent; border: none; color: #94a3b8; font-size: 12px; cursor: pointer;">✕</button>
+        <button onclick="event.stopPropagation(); deleteDocument('${escapeHtml(doc.name)}', '${escapeHtml(doc.conversationId || 'global')}')" title="Delete document" style="background: transparent; border: none; color: #94a3b8; font-size: 12px; cursor: pointer;">✕</button>
       </div>
-      <div class="item-meta" style="margin-top: 6px;">
-        <span>${doc.chunkCount} passages</span>
-        <span>${(doc.sizeBytes / 1024).toFixed(1)} KB</span>
+      <div class="item-meta" style="margin-top: 6px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor}; font-weight: 600;">${badgeText}</span>
+        <span>${doc.chunkCount} passages • ${(doc.sizeBytes / 1024).toFixed(1)} KB</span>
       </div>
     `;
 
@@ -442,7 +608,252 @@ function renderDocumentsList() {
   });
 }
 
-// Upload file handler
+// Cached skills for role
+let loadedRoleSkills = [];
+
+// Fetch skills from backend for logged in user's role
+async function loadSkills() {
+  itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">Loading specialized skills...</div>`;
+  try {
+    const res = await fetch('/api/skills');
+    const data = await res.json();
+    loadedRoleSkills = data.skills || [];
+    renderSkillsList();
+  } catch (err) {
+    itemsList.innerHTML = `<div style="text-align: center; color: #f87171; font-size: 12px; padding: 20px;">Failed to load skills: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// Render skills cards in Explorer sidebar
+function renderSkillsList() {
+  const query = (sidebarSearch ? sidebarSearch.value : '').toLowerCase();
+  itemsList.innerHTML = '';
+
+  const headerDiv = document.createElement('div');
+  headerDiv.style.cssText = 'padding: 8px 12px; background: rgba(30, 41, 59, 0.6); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;';
+  headerDiv.innerHTML = `
+    <span style="font-size: 11px; font-weight: 700; color: #c084fc;">⚡ Specialized Skills (${loadedRoleSkills.length})</span>
+    <span style="font-size: 10px; color: #94a3b8; font-family: monospace;">Role: ${escapeHtml((currentUser?.role || 'user').toUpperCase())}</span>
+  `;
+  itemsList.appendChild(headerDiv);
+
+  const filtered = loadedRoleSkills.filter(s => 
+    s.displayName.toLowerCase().includes(query) ||
+    s.description.toLowerCase().includes(query) ||
+    (s.commands || []).some(c => c.command.toLowerCase().includes(query))
+  );
+
+  if (filtered.length === 0) {
+    itemsList.innerHTML += `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">No skills matching "${escapeHtml(query)}"</div>`;
+    return;
+  }
+
+  filtered.forEach(skill => {
+    const div = document.createElement('div');
+    div.className = 'item-card skill-card-sidebar';
+    div.style.cssText = 'border-color: rgba(192, 132, 252, 0.3); background: rgba(30, 27, 75, 0.25);';
+
+    const cmdsHtml = (skill.commands || []).map(cmd => `
+      <button type="button" class="btn-skill-cmd" onclick="event.stopPropagation(); triggerSkillCommand('${escapeHtml(cmd.example || cmd.command)}')">
+        <code>${escapeHtml(cmd.command)}</code>
+        <span>${escapeHtml(cmd.description)}</span>
+      </button>
+    `).join('');
+
+    div.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+        <span style="font-size: 14px;">⚡</span>
+        <div style="font-size: 13px; font-weight: 600; color: #e9d5ff;">${escapeHtml(skill.displayName)}</div>
+      </div>
+      <div style="font-size: 11px; color: #94a3b8; line-height: 1.4; margin-bottom: 8px;">${escapeHtml(skill.description)}</div>
+      <div class="skill-commands-wrap">${cmdsHtml}</div>
+    `;
+
+    itemsList.appendChild(div);
+  });
+}
+
+// Trigger a skill directly into the chat prompt
+window.triggerSkillCommand = function(cmdText) {
+  userInput.value = cmdText;
+  userInput.focus();
+  hideSlashCommandsPopup();
+  if (window.innerWidth <= 768) toggleSidebar();
+};
+
+// ==========================================
+// SLASH COMMANDS AUTOCOMPLETE POPUP
+// ==========================================
+let slashPopupActiveIndex = -1;
+let currentMatchingCommands = [];
+
+function getSlashPopup() {
+  return document.getElementById('slash-commands-popup');
+}
+
+function hideSlashCommandsPopup() {
+  const popup = getSlashPopup();
+  if (popup) {
+    popup.style.display = 'none';
+    popup.innerHTML = '';
+  }
+  slashPopupActiveIndex = -1;
+  currentMatchingCommands = [];
+}
+
+async function ensureSkillsLoaded() {
+  if (!loadedRoleSkills || loadedRoleSkills.length === 0) {
+    try {
+      const res = await fetch('/api/skills');
+      const data = await res.json();
+      loadedRoleSkills = data.skills || [];
+    } catch (e) {
+      console.warn('Failed to prefetch skills:', e);
+    }
+  }
+}
+
+async function updateSlashCommandsPopup() {
+  const popup = getSlashPopup();
+  if (!popup || !userInput) return;
+
+  const val = userInput.value;
+  // Trigger when input starts with "/"
+  if (!val.startsWith('/')) {
+    hideSlashCommandsPopup();
+    return;
+  }
+
+  await ensureSkillsLoaded();
+
+  // Extract query after "/"
+  const query = val.slice(1).trim().toLowerCase();
+
+  // Flatten all commands across skills
+  const allCmds = [];
+  (loadedRoleSkills || []).forEach(skill => {
+    (skill.commands || []).forEach(cmd => {
+      allCmds.push({
+        ...cmd,
+        skillName: skill.displayName,
+        role: skill.role
+      });
+    });
+  });
+
+  // Filter commands
+  currentMatchingCommands = allCmds.filter(c => {
+    const cleanCmd = c.command.replace(/^\//, '').toLowerCase();
+    const cleanDesc = (c.description || '').toLowerCase();
+    const cleanSkill = (c.skillName || '').toLowerCase();
+    return !query || cleanCmd.includes(query) || cleanDesc.includes(query) || cleanSkill.includes(query);
+  });
+
+  if (currentMatchingCommands.length === 0) {
+    hideSlashCommandsPopup();
+    return;
+  }
+
+  slashPopupActiveIndex = 0; // Default first item highlighted
+
+  let html = `
+    <div class="slash-cmd-header">
+      <span>⚡ Available Skills &amp; Commands</span>
+      <span>${currentMatchingCommands.length} available</span>
+    </div>
+  `;
+
+  currentMatchingCommands.slice(0, 10).forEach((cmd, idx) => {
+    const isAct = idx === 0 ? 'active' : '';
+    html += `
+      <div class="slash-cmd-item ${isAct}" data-index="${idx}" onclick="selectSlashCommand(${idx})">
+        <div class="slash-cmd-left">
+          <span class="slash-cmd-code">${escapeHtml(cmd.command)}</span>
+          <span class="slash-cmd-desc">${escapeHtml(cmd.description)}</span>
+        </div>
+        <span class="slash-cmd-meta">${escapeHtml(cmd.skillName)}</span>
+      </div>
+    `;
+  });
+
+  popup.innerHTML = html;
+  popup.style.display = 'flex';
+}
+
+window.selectSlashCommand = function(idx) {
+  const cmd = currentMatchingCommands[idx];
+  if (!cmd || !userInput) return;
+
+  userInput.value = cmd.example || (cmd.command + ' ');
+  userInput.focus();
+  hideSlashCommandsPopup();
+};
+
+function handleSlashKeyNav(e) {
+  const popup = getSlashPopup();
+  if (!popup || popup.style.display === 'none' || currentMatchingCommands.length === 0) return false;
+
+  const items = popup.querySelectorAll('.slash-cmd-item');
+  const count = Math.min(currentMatchingCommands.length, 10);
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    slashPopupActiveIndex = (slashPopupActiveIndex + 1) % count;
+    updatePopupActiveState(items);
+    return true;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    slashPopupActiveIndex = (slashPopupActiveIndex - 1 + count) % count;
+    updatePopupActiveState(items);
+    return true;
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    if (slashPopupActiveIndex >= 0 && slashPopupActiveIndex < count) {
+      e.preventDefault();
+      selectSlashCommand(slashPopupActiveIndex);
+      return true;
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    hideSlashCommandsPopup();
+    return true;
+  }
+  return false;
+}
+
+function updatePopupActiveState(items) {
+  items.forEach((item, idx) => {
+    if (idx === slashPopupActiveIndex) {
+      item.classList.add('active');
+      item.scrollIntoView({ block: 'nearest' });
+    } else {
+      item.classList.remove('active');
+    }
+  });
+}
+
+// Attach listeners for slash popup
+if (userInput) {
+  userInput.addEventListener('input', () => {
+    updateSlashCommandsPopup();
+  });
+
+  userInput.addEventListener('keydown', (e) => {
+    handleSlashKeyNav(e);
+  });
+}
+
+// Close popup on outside clicks
+document.addEventListener('click', (e) => {
+  const popup = getSlashPopup();
+  if (popup && popup.style.display !== 'none') {
+    if (!popup.contains(e.target) && e.target !== userInput) {
+      hideSlashCommandsPopup();
+    }
+  }
+});
+
+
+// Upload file handler (attaches to active conversation)
 window.handleFileUpload = async function(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -450,10 +861,14 @@ window.handleFileUpload = async function(event) {
   const uploadBtn = document.getElementById('btn-upload-doc');
   if (uploadBtn) uploadBtn.textContent = '⏳';
 
-  appendMessage(`📎 Uploading & indexing document <strong>${escapeHtml(file.name)}</strong>...`, 'user');
+  const convNotice = currentConversationId ? ` (Chat: <em>${escapeHtml(currentConversationId)}</em>)` : '';
+  appendMessage(`📎 Uploading & indexing document <strong>${escapeHtml(file.name)}</strong>${convNotice}...`, 'user');
 
   const formData = new FormData();
   formData.append('file', file);
+  if (currentConversationId) {
+    formData.append('conversationId', currentConversationId);
+  }
 
   try {
     const res = await fetch('/api/docs/upload', {
@@ -462,7 +877,7 @@ window.handleFileUpload = async function(event) {
     });
     const data = await res.json();
     if (data.success) {
-      appendMessage(`✅ <strong>${escapeHtml(file.name)}</strong> indexed successfully! (${data.chunkCount} passages extracted). You can now ask any technical or operational questions about this document.`, 'agent');
+      appendMessage(`✅ <strong>${escapeHtml(file.name)}</strong> indexed successfully for this chat! (${data.chunkCount} passages extracted). You can now ask any questions directly referencing this document.`, 'agent');
       if (activeTab === 'documents') loadDocuments();
     } else {
       appendMessage(`⚠️ Failed to index document: ${escapeHtml(data.error || 'Unknown error')}`, 'agent');
@@ -482,7 +897,7 @@ window.syncFolderDocs = async function() {
     const res = await fetch('/api/docs/sync', { method: 'POST' });
     const data = await res.json();
     loadDocuments();
-    appendMessage(`🔄 Synchronized local knowledge folder: ${data.synced?.length || 0} document(s) scanned and indexed.`, 'agent');
+    appendMessage(`🔄 Synchronized local knowledge folder: ${data.synced?.length || 0} document(s) scanned and indexed globally.`, 'agent');
   } catch (err) {
     alert(`Failed to sync folder: ${err.message}`);
     loadDocuments();
@@ -490,10 +905,11 @@ window.syncFolderDocs = async function() {
 };
 
 // Delete a document
-window.deleteDocument = async function(docName) {
+window.deleteDocument = async function(docName, convScope = null) {
   if (!confirm(`Delete ${docName} from the knowledge base?`)) return;
   try {
-    await fetch(`/api/docs/${encodeURIComponent(docName)}`, { method: 'DELETE' });
+    const query = convScope && convScope !== 'global' ? `?conversationId=${encodeURIComponent(convScope)}` : '';
+    await fetch(`/api/docs/${encodeURIComponent(docName)}${query}`, { method: 'DELETE' });
     loadDocuments();
   } catch (err) {
     alert(`Failed to delete document: ${err.message}`);
@@ -536,11 +952,17 @@ chatForm.addEventListener('submit', async (e) => {
 
   try {
     const activeSite = siteSelect.value || 'TEST';
+    // Send clean, lightweight conversation messages without bloating request with giant raw tool JSONs
+    const cleanMessages = history.slice(-20).map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+    }));
+
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        messages: history,
+        messages: cleanMessages,
         sessionId: 'default-session',
         siteid: activeSite,
         conversationId: currentConversationId
@@ -565,17 +987,23 @@ chatForm.addEventListener('submit', async (e) => {
     }
   } catch (err) {
     loadingDiv.remove();
-    appendMessage("Network failure connecting to Express backend.", 'agent');
+    console.error('[Chat Fetch Error]:', err);
+    appendMessage(`⚠️ Connection interrupted (${err.message || 'Network error'}). If you were logged out, please refresh the page to sign in again.`, 'agent');
   }
 });
 
-// Render approval card for mutating action
+// Render approval card for mutating action with editable description
 function appendApprovalCard(data) {
   const row = document.createElement('div');
   row.className = 'msg-row';
 
   const cardId = `card_${data.actionId}`;
-  const argsFormatted = JSON.stringify(data.toolArgs, null, 2);
+  const args = data.toolArgs || {};
+  const currentDesc = args.description || args.summary || '';
+  const currentAsset = args.assetnum || '';
+  const currentDept = args.department || '';
+  const currentWorkType = args.worktype || '';
+  const currentSite = args.siteid || '';
 
   let reasoningHtml = '';
   if (data.reasoning) {
@@ -589,17 +1017,50 @@ function appendApprovalCard(data) {
     `;
   }
 
+  // Create clean parameter pills
+  const metaPills = [];
+  if (currentSite) metaPills.push(`<span>Site: <strong>${escapeHtml(currentSite)}</strong></span>`);
+  if (currentAsset) metaPills.push(`<span>Asset: <strong>${escapeHtml(currentAsset)}</strong></span>`);
+  if (currentWorkType) metaPills.push(`<span>Type: <strong>${escapeHtml(currentWorkType)}</strong></span>`);
+  if (currentDept) metaPills.push(`<span>Dept: <strong>${escapeHtml(currentDept)}</strong></span>`);
+
   row.innerHTML = `
     <div class="bubble bubble-agent" id="${cardId}">
       <div class="tool-badge">🛡️ Human Confirmation Required</div>
       ${reasoningHtml}
-      <p>${escapeHtml(data.reply)}</p>
+      <p style="margin-bottom: 10px;">${escapeHtml(data.reply)}</p>
       <div class="approval-card">
-        <div class="approval-title">⚡ Proposed Operation: <code>${escapeHtml(data.toolName)}</code></div>
-        <div class="approval-details">${escapeHtml(argsFormatted)}</div>
+        <div class="approval-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+          <span>Proposed Operation: <code>${escapeHtml(data.toolName)}</code></span>
+        </div>
+
+        ${metaPills.length > 0 ? `<div class="approval-meta-pills">${metaPills.join('')}</div>` : ''}
+
+        <div class="approval-edit-group">
+          <label for="desc_${cardId}" class="approval-edit-label">
+            <span>Description / Task Details (Editable):</span>
+            <span class="approval-edit-tip">You can modify this before submitting</span>
+          </label>
+          <textarea id="desc_${cardId}" class="approval-desc-input" rows="2" placeholder="Enter work order or ticket description...">${escapeHtml(currentDesc)}</textarea>
+        </div>
+
         <div class="approval-btns">
-          <button class="btn-approve" onclick="handleApproval('${data.actionId}', true, '${cardId}')">✓ Confirm & Execute</button>
-          <button class="btn-reject" onclick="handleApproval('${data.actionId}', false, '${cardId}')">✕ Reject</button>
+          <button type="button" class="btn-approve" onclick="handleApproval('${data.actionId}', true, '${cardId}')">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span>Confirm & Execute</span>
+          </button>
+          <button type="button" class="btn-reject" onclick="handleApproval('${data.actionId}', false, '${cardId}')">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span>Reject</span>
+          </button>
         </div>
       </div>
     </div>
@@ -608,22 +1069,31 @@ function appendApprovalCard(data) {
   chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// Execute or reject approved action
+// Execute or reject approved action (with user-edited description if modified)
 window.handleApproval = async function(actionId, approved, cardId) {
   const container = document.getElementById(cardId);
+  const descInput = document.getElementById(`desc_${cardId}`);
+  const updatedDesc = descInput ? descInput.value.trim() : null;
+
   if (container) {
-    container.innerHTML = `<div style="color: #94a3b8; font-style: italic;">${approved ? 'Executing approved change in Maximo...' : 'Cancelling action...'}</div>`;
+    container.innerHTML = `<div style="color: #94a3b8; font-style: italic; padding: 10px 0;">${approved ? 'Executing approved change in Maximo...' : 'Cancelling action...'}</div>`;
   }
 
   try {
+    const payload = {
+      actionId,
+      approved,
+      conversation: history
+    };
+
+    if (approved && updatedDesc) {
+      payload.updatedArgs = { description: updatedDesc };
+    }
+
     const res = await fetch('/api/approve-action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        actionId,
-        approved,
-        conversation: history
-      })
+      body: JSON.stringify(payload)
     });
 
     const data = await res.json();
@@ -680,7 +1150,8 @@ function appendMessage(text, role, tools, reasoning) {
   }
 
   const content = isAgent && window.marked ? marked.parse(processedText) : escapeHtml(processedText);
-  row.innerHTML = `<div class="bubble bubble-${roleClass}">${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
+  const agentHeader = isAgent ? `<div class="agent-prefix">Eden Copilot</div>` : '';
+  row.innerHTML = `<div class="bubble bubble-${roleClass}">${agentHeader}${toolHtml}${reasoningHtml}${dashboardWidgetsHtml}${content}</div>`;
   chatBox.appendChild(row);
 
   // Automatically attach export action bars and responsive wrappers to all rendered data tables in agent bubble
@@ -1437,11 +1908,22 @@ async function checkAuth() {
     }
     const data = await res.json();
     if (data.user) {
+      currentUser = data.user;
       const nameEl = document.getElementById('user-display-name');
       const nameElMobile = document.getElementById('user-display-name-mobile');
       const userText = `${data.user.displayName || data.user.username} (${data.user.role || 'user'})`;
       if (nameEl) nameEl.textContent = userText;
       if (nameElMobile) nameElMobile.textContent = userText;
+
+      // Adjust Menu visibility for Technicians
+      if (data.user.role === 'technician') {
+        document.querySelectorAll('.dropdown-menu-btn').forEach(btn => {
+          const txt = btn.textContent || '';
+          if (txt.includes('Portfolio Summary') || txt.includes('Total Assets Across All') || txt.includes('C-Suite') || txt.includes('Cross-Site Reliability')) {
+            btn.style.display = 'none';
+          }
+        });
+      }
     }
     return true;
   } catch (err) {
@@ -1555,7 +2037,7 @@ window.toggleVoiceInput = function() {
         voiceBtn.classList.add('listening');
         voiceBtn.textContent = '⏹️'; // Clear visual toggle
       }
-      if (input) input.placeholder = selectedLang.startsWith('ar') 
+      if (input) input.placeholder = (currentVoiceLang || 'en-US').startsWith('ar') 
         ? "جاري الاستماع... تحدث بطلاقة (اضغط ⏹️ للإيقاف)..." 
         : "Listening continuously... Speak now (tap ⏹️ to stop)...";
     };
@@ -1642,18 +2124,41 @@ function createMachineCardExportBar(cardEl, assetNum = 'ASSET') {
   bar.className = 'machine-card-export-toolbar';
   bar.innerHTML = `
     <div class="card-export-title">
-      <span>📑 Export Complete Machine Card:</span>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <polyline points="10 9 9 9 8 9"></polyline>
+      </svg>
+      <span>Passport Card:</span>
       <span class="card-export-badge">${escapeHtml(assetNum)}</span>
     </div>
     <div class="card-export-actions">
       <button type="button" class="btn-card-export btn-export-all-pdf" title="Export complete passport card and work order history as branded PDF">
-        📑 Export Full PDF
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"></path>
+          <polyline points="14 2 14 7 20 7"></polyline>
+          <path d="M10 12a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-1v2"></path>
+        </svg>
+        <span>Full PDF</span>
       </button>
       <button type="button" class="btn-card-export btn-export-all-excel" title="Export specs, metrics, and work order history to multi-sheet / structured Excel workbook">
-        📊 Export Full Excel
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+          <line x1="3" y1="9" x2="21" y2="9"></line>
+          <line x1="3" y1="15" x2="21" y2="15"></line>
+        </svg>
+        <span>Full Excel</span>
       </button>
       <button type="button" class="btn-card-export btn-export-print" title="Print or save as high-res document">
-        🖨️ Print Card
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 6 2 18 2 18 9"></polyline>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+          <rect x="6" y="14" width="12" height="8"></rect>
+        </svg>
+        <span>Print</span>
       </button>
     </div>
   `;
@@ -1879,10 +2384,42 @@ function createTableExportBar(tableEl, baseName = 'maximo_report') {
   const bar = document.createElement('div');
   bar.className = 'table-export-bar';
   bar.innerHTML = `
-    <span>📥 Export:</span>
-    <button type="button" class="btn-export btn-export-csv" title="Export as CSV spreadsheet">📄 CSV</button>
-    <button type="button" class="btn-export btn-export-excel" title="Export as Microsoft Excel (.xlsx)">📊 Excel</button>
-    <button type="button" class="btn-export btn-export-pdf" title="Export as PDF Document">📑 PDF</button>
+    <div class="table-export-label">
+      <svg class="export-icon-main" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <span>Export</span>
+    </div>
+    <div class="table-export-actions">
+      <button type="button" class="btn-export btn-export-csv" title="Export as CSV spreadsheet">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="8" y1="13" x2="16" y2="13"></line>
+          <line x1="8" y1="17" x2="16" y2="17"></line>
+        </svg>
+        <span>CSV</span>
+      </button>
+      <button type="button" class="btn-export btn-export-excel" title="Export as Microsoft Excel (.xlsx)">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+          <line x1="3" y1="9" x2="21" y2="9"></line>
+          <line x1="3" y1="15" x2="21" y2="15"></line>
+        </svg>
+        <span>Excel</span>
+      </button>
+      <button type="button" class="btn-export btn-export-pdf" title="Export as PDF Document">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"></path>
+          <polyline points="14 2 14 7 20 7"></polyline>
+          <path d="M10 12a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-1v2"></path>
+        </svg>
+        <span>PDF</span>
+      </button>
+    </div>
   `;
 
   bar.querySelector('.btn-export-csv').onclick = () => exportTableToCSV(tableEl, `${baseName}.csv`);
@@ -2054,93 +2591,12 @@ function updateThemeUI(theme) {
 // Initial load
 (async () => {
   initTheme();
-  initMatrixDigitalRain();
   const isAuthed = await checkAuth();
   if (isAuthed) {
     await loadContext();
     await loadUserConversations();
   }
 })();
-
-// --- Streams of Glowing Green Characters Background Animation (Matrix Rain) ---
-function initMatrixDigitalRain() {
-  const canvas = document.getElementById('matrix-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  let width = (canvas.width = window.innerWidth);
-  let height = (canvas.height = window.innerHeight);
-
-  // High-tech characters: Katakana, Cyrillic, Greek, Numbers & Hex glyphs
-  const chars = '0123456789ABCDEFΞΨΩΣΠΔλθφψαβγδε010101アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン';
-  const fontSize = 14;
-  let columns = Math.floor(width / fontSize);
-  let drops = [];
-
-  function resetDrops() {
-    columns = Math.floor(width / fontSize);
-    drops = [];
-    for (let i = 0; i < columns; i++) {
-      // Stagger initial drop positions randomly above the screen
-      drops[i] = Math.floor(Math.random() * -100);
-    }
-  }
-  resetDrops();
-
-  window.addEventListener('resize', () => {
-    width = canvas.width = window.innerWidth;
-    height = canvas.height = window.innerHeight;
-    resetDrops();
-  });
-
-  let lastFrameTime = 0;
-  const fpsInterval = 1000 / 30; // 30 FPS for optimal performance & classic Matrix pace
-
-  function renderMatrix(currentTime) {
-    requestAnimationFrame(renderMatrix);
-
-    const elapsed = currentTime - lastFrameTime;
-    if (elapsed < fpsInterval) return;
-    lastFrameTime = currentTime - (elapsed % fpsInterval);
-
-    // Semi-transparent fade layer to create character motion trails
-    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-    ctx.fillStyle = isLight ? 'rgba(248, 250, 252, 0.08)' : 'rgba(11, 17, 32, 0.08)';
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.font = `${fontSize}px monospace`;
-
-    for (let i = 0; i < drops.length; i++) {
-      const text = chars.charAt(Math.floor(Math.random() * chars.length));
-      const x = i * fontSize;
-      const y = drops[i] * fontSize;
-
-      if (y > 0 && y < height + fontSize) {
-        // Glowing leading character (bright lime/white highlight)
-        ctx.save();
-        ctx.fillStyle = '#bbf7d0'; // luminous bright green head
-        ctx.shadowColor = '#22c55e';
-        ctx.shadowBlur = 8;
-        ctx.fillText(text, x, y);
-        ctx.restore();
-
-        // Trail character
-        ctx.fillStyle = isLight ? '#15803d' : '#22c55e';
-        ctx.fillText(text, x, y - fontSize);
-      }
-
-      // Reset drop to top once it falls past bottom with random delay
-      if (y > height && Math.random() > 0.975) {
-        drops[i] = 0;
-      }
-
-      drops[i]++;
-    }
-  }
-
-  requestAnimationFrame(renderMatrix);
-}
 
 
 

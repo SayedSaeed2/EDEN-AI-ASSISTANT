@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "enabled": false,
+      "description": "Example reference MCP server"
+    }
+  }
+}
