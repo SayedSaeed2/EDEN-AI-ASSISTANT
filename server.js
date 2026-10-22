@@ -39,7 +39,8 @@ import { ragService } from './services/ragService.js';
 // Setup file upload destination in knowledge_docs
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.resolve('knowledge_docs');
+    const username = (req.user?.username || 'common').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const uploadDir = path.resolve('knowledge_docs', 'user_uploads', username);
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },

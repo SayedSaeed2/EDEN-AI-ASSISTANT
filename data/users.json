@@ -30,21 +30,21 @@
   {
     "username": "Eng.Amgad",
     "password": "Test12345",
-    "displayName": "System Administrator",
+    "displayName": "Eng. Amgad",
     "role": "admin",
     "allowedSites": ["*"]
   },
   {
     "username": "Eng.Mokhtar",
     "password": "Test12345",
-    "displayName": "System Administrator",
+    "displayName": "Eng. Mokhtar",
     "role": "admin",
     "allowedSites": ["*"]
   },
   {
     "username": "Eng.Hamdy",
     "password": "Test12345",
-    "displayName": "System Administrator",
+    "displayName": "Eng. Hamdy",
     "role": "admin",
     "allowedSites": ["*"]
   }

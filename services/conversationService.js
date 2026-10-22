@@ -37,12 +37,14 @@ function saveUserStore(username, data) {
 }
 
 export const conversationService = {
-  // List all conversations for a user (summary without heavy message content)
+  // List all non-empty conversations for a user (summary without heavy message content)
   listConversations(username) {
     const store = loadUserStore(username);
+    // Only return conversations that actually contain messages
+    const validConvs = (store.conversations || []).filter(c => c.messages && c.messages.length > 0);
     return {
       activeConversationId: store.activeConversationId,
-      conversations: store.conversations.map(c => ({
+      conversations: validConvs.map(c => ({
         id: c.id,
         title: c.title,
         site: c.site,

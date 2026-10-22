@@ -91,7 +91,7 @@ class ExternalMcpManager {
       // Discover tools
       const toolsResult = await client.listTools();
       const discoveredTools = toolsResult.tools || [];
-      console.log(`📦 [MCP Client Manager] Discovered ${discoveredTools.length} tools from '${key}':`, discoveredTools.map(t => t.name).join(', '));
+      console.log(`📦 [MCP Client Manager] Discovered ${discoveredTools.length} tools from '${key}'!`);
 
       const toolEntries = discoveredTools.map(t => ({
         name: t.name,
@@ -128,11 +128,22 @@ class ExternalMcpManager {
   }
 
   getExternalToolsSchema() {
-    return this.externalTools.map(t => ({
+    // If specific modules or tools are whitelisted in mcp_config.json, filter them; otherwise export all
+    const config = this.loadConfig();
+    const enabledModules = config.enabledModules || null; // e.g. ['po', 'inventory', 'labor', 'pm']
+
+    let toolsToExport = this.externalTools;
+    if (Array.isArray(enabledModules) && enabledModules.length > 0) {
+      toolsToExport = this.externalTools.filter(t => {
+        return enabledModules.some(mod => t.name.toLowerCase().includes(mod.toLowerCase()));
+      });
+    }
+
+    return toolsToExport.map(t => ({
       type: 'function',
       function: {
         name: t.name,
-        description: `[External MCP: ${t.serverKey}] ${t.description}`,
+        description: `[MAS 9.x MCP] ${t.description}`,
         parameters: t.inputSchema
       }
     }));
@@ -164,12 +175,24 @@ class ExternalMcpManager {
       return { error: `[MCP Server Error: ${toolMeta.serverKey}] ${errText}` };
     }
 
-    const textOutput = response.content?.map(c => c.text).join('\n') || '';
-    try {
-      return JSON.parse(textOutput);
-    } catch {
-      return { result: textOutput };
+    // Unwrap nested MCP text wrappers (handles servers that double-encode JSON)
+    let extracted = response;
+    let iterations = 0;
+    while (extracted && typeof extracted === 'object' && Array.isArray(extracted.content) && extracted.content[0]?.text && iterations < 3) {
+      iterations++;
+      try {
+        extracted = JSON.parse(extracted.content[0].text);
+      } catch {
+        extracted = { result: extracted.content[0].text };
+        break;
+      }
     }
+
+    if (typeof extracted === 'string') {
+      try { return JSON.parse(extracted); } catch { return { result: extracted }; }
+    }
+
+    return extracted;
   }
 
   async disconnectAll() {

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { config } from '../config/index.js';
+import { deepCleanMaximoData } from './arabicCleaner.js';
 dotenv.config();
 
 // Multi-Instance Pool (ED, GEM, MD)
@@ -54,11 +55,11 @@ const maximoClient = new Proxy({}, {
 
 export const maximoService = {
   // --- Existing Work Order Methods ---
-  async getWorkOrders({ status, location, siteid, all_sites = false, limit = 15 }) {
+  async getWorkOrders({ status, location, siteid, all_sites = false, limit = 15, period } = {}) {
     try {
       const site = siteid || getDefaultSite();
       let oslcWhere = '';
-      if (!all_sites && site) {
+      if (!all_sites && site && site.toUpperCase() !== 'ALL') {
         oslcWhere = `siteid="${site}"`;
       }
       if (status) {
@@ -66,6 +67,24 @@ export const maximoService = {
       }
       if (location) {
         oslcWhere += (oslcWhere ? ' and ' : '') + `location="${location.trim().toUpperCase()}"`;
+      }
+      if (period) {
+        const now = new Date();
+        const p = period.toLowerCase();
+        let cutoff = null;
+        if (p.includes('month') || p === '30d') {
+          cutoff = new Date(); cutoff.setDate(now.getDate() - 30);
+        } else if (p.includes('quarter') || p === '90d') {
+          cutoff = new Date(); cutoff.setDate(now.getDate() - 90);
+        } else if (p.includes('year') || p === '365d') {
+          cutoff = new Date(); cutoff.setDate(now.getDate() - 365);
+        } else if (p.includes('week') || p === '7d') {
+          cutoff = new Date(); cutoff.setDate(now.getDate() - 7);
+        }
+        if (cutoff) {
+          const dStr = cutoff.toISOString().split('T')[0];
+          oslcWhere += (oslcWhere ? ' and ' : '') + `reportdate>="${dStr}"`;
+        }
       }
 
       // Fetch extra records so child tasks (T-*) can be filtered out without under-filling the requested limit
@@ -662,13 +681,16 @@ export const maximoService = {
         oslcWhere += (oslcWhere ? ' and ' : '') + `reportdate>="${cutoffDate.toISOString().split('T')[0]}"`;
       }
 
+      const requestedLimit = Math.max(1, Number(limit) || 15);
+      const queryPageSize = cutoffDate ? 100 : Math.min(Math.max(requestedLimit, 25), 100);
+
       let response;
       try {
         response = await maximoClient.get('/MXSR', {
           params: {
             ...(oslcWhere && { 'oslc.where': oslcWhere }),
             'oslc.select': 'ticketid,description,status,reportedby,reportdate,assetnum,siteid',
-            'oslc.pageSize': Math.min(Number(limit) || 15, 100),
+            'oslc.pageSize': queryPageSize,
             'oslc.orderBy': '-reportdate',
             'lean': 1
           }
@@ -683,7 +705,7 @@ export const maximoService = {
           params: {
             ...(fallbackWhere && { 'oslc.where': fallbackWhere }),
             'oslc.select': 'ticketid,description,status,reportedby,reportdate,assetnum,siteid',
-            'oslc.pageSize': Math.min(Number(limit) || 15, 100),
+            'oslc.pageSize': 100,
             'oslc.orderBy': '-reportdate',
             'lean': 1
           }
@@ -698,13 +720,16 @@ export const maximoService = {
         });
       }
 
-      return {
+      const totalMatchedInPeriod = members.length;
+      const paginatedRequests = members.slice(0, requestedLimit);
+
+      return deepCleanMaximoData({
         cardType: 'SERVICE_REQUEST_LIST',
         site: site || 'ALL',
         period: periodParam,
         periodLabel,
-        totalFound: members.length,
-        requests: members.map(sr => {
+        totalFound: totalMatchedInPeriod,
+        requests: paginatedRequests.map(sr => {
           const st = (sr.status || '').toUpperCase();
           let friendlyStatus = 'Received & Queued';
           if (st === 'INPRG') friendlyStatus = 'Technician Working';
@@ -724,7 +749,7 @@ export const maximoService = {
             reportdate: sr.reportdate ? (sr.reportdate.includes('T') ? sr.reportdate.split('T')[0] : sr.reportdate) : 'N/A'
           };
         })
-      };
+      });
     } catch (err) {
       return { error: `Failed to query service requests: ${err.response?.data?.Error?.message || err.message}` };
     }
@@ -995,7 +1020,7 @@ export const maximoService = {
         laborHours: wo.actlabhrs ? `${parseFloat(wo.actlabhrs).toFixed(1)}h` : 'N/A'
       }));
 
-      return {
+      return deepCleanMaximoData({
         cardType: 'MACHINE_PASSPORT_CARD',
         assetnum: asset.assetnum,
         description: asset.description || 'Equipment',
@@ -1028,15 +1053,53 @@ export const maximoService = {
         workOrderHistory: allTimeHistory,
         crossSiteResolved,
         originalRequestedSite: crossSiteResolved ? originalRequestedSite : null
-      };
+      });
     } catch (err) {
       return { error: `Failed to compile machine card for ${assetnum}: ${err.response?.data?.Error?.message || err.message}` };
     }
   },
 
-  // --- Total Asset Count / KPI ---
-  async getAssetCount({ status, siteid }) {
+  // --- Total Asset Count / KPI (Single Site & Multi-Site Fleet Supported) ---
+  async getAssetCount({ status, siteid, all_sites } = {}) {
     try {
+      const isAllSites = all_sites === true || (siteid && (siteid.toUpperCase() === 'ALL' || siteid.toUpperCase() === 'ALL_SITES'));
+
+      if (isAllSites) {
+        const sitesList = await this.getSites();
+        const siteResults = await Promise.all(
+          sitesList.map(async (s) => {
+            try {
+              let oslcWhere = `siteid="${s.siteid}"`;
+              if (status) oslcWhere += ` and status="${status}"`;
+              const res = await maximoClient.get('/MXASSET', {
+                params: {
+                  'oslc.where': oslcWhere,
+                  'oslc.count': 1,
+                  'lean': 1
+                }
+              });
+              const cnt = res.data?.totalCount ?? res.headers['x-total-count'] ?? (res.data?.member ? res.data.member.length : 0);
+              return { siteid: s.siteid, siteName: s.description || s.siteid, assetCount: Number(cnt) };
+            } catch (err) {
+              return { siteid: s.siteid, siteName: s.description || s.siteid, assetCount: 0 };
+            }
+          })
+        );
+
+        const grandTotal = siteResults.reduce((sum, r) => sum + r.assetCount, 0);
+        const sortedSites = siteResults.sort((a, b) => b.assetCount - a.assetCount);
+
+        return {
+          all_sites: true,
+          site: 'ALL_SITES',
+          status: status || 'ALL',
+          sitesEvaluated: siteResults.length,
+          totalAssets: grandTotal,
+          breakdownBySite: sortedSites
+        };
+      }
+
+      // Single Site Count
       const site = siteid || getDefaultSite();
       let oslcWhere = `siteid="${site}"`;
       if (status) oslcWhere += ` and status="${status}"`;
@@ -1049,11 +1112,11 @@ export const maximoService = {
         }
       });
 
-      const totalCount = response.data?.totalCount ?? 
-                         response.headers['x-total-count'] ?? 
+      const totalCount = response.data?.totalCount ??
+                         response.headers['x-total-count'] ??
                          (response.data?.member ? response.data.member.length : 0);
 
-      return { site, status: status || 'ALL', totalAssets: Number(totalCount) };
+      return { all_sites: false, site, status: status || 'ALL', totalAssets: Number(totalCount) };
     } catch (err) {
       return { error: `Failed to count assets: ${err.response?.data?.Error?.message || err.message}` };
     }
@@ -2464,11 +2527,14 @@ export const maximoService = {
               } else if (wt === 'RT' || wt === 'PM') {
                 rtPmCount++;
 
-                // PM Compliance
+                // PM Compliance (with standard SMRP 7-day grace window)
                 if (status === 'COMP' || status === 'CLOSE') {
                   pmTotalCompleted++;
                   if (r.actfinish && r.targcompdate) {
-                    if (new Date(r.actfinish) <= new Date(r.targcompdate)) {
+                    const fin = new Date(r.actfinish);
+                    const targ = new Date(r.targcompdate);
+                    const graceLimit = new Date(targ.getTime() + (7 * 24 * 60 * 60 * 1000));
+                    if (fin <= graceLimit) {
                       pmCompletedOnTime++;
                     }
                   } else {
@@ -2500,6 +2566,12 @@ export const maximoService = {
               siteid: s.siteid,
               description: s.description || s.siteid,
               totalOrders: records.length,
+              cmCount,
+              rtPmCount,
+              pmTotalCompleted,
+              pmCompletedOnTime,
+              breakdownCount,
+              totalRepairHours,
               cmRatio: `${cmRatioVal}%`,
               pmCompliance: `${pmComplianceVal}%`,
               activeBacklog,
@@ -2512,6 +2584,12 @@ export const maximoService = {
               siteid: s.siteid,
               description: s.description || s.siteid,
               totalOrders: 0,
+              cmCount: 0,
+              rtPmCount: 0,
+              pmTotalCompleted: 0,
+              pmCompletedOnTime: 0,
+              breakdownCount: 0,
+              totalRepairHours: 0,
               cmRatio: 'N/A',
               pmCompliance: 'N/A',
               activeBacklog: 0,
@@ -2523,11 +2601,53 @@ export const maximoService = {
         })
       );
 
+      // Compute aggregate Fleet Portfolio Average across all active sites
+      let fleetTotalOrders = 0;
+      let fleetCmCount = 0;
+      let fleetRtPmCount = 0;
+      let fleetActiveBacklog = 0;
+      let fleetPmCompleted = 0;
+      let fleetPmOnTime = 0;
+      let fleetBreakdowns = 0;
+      let fleetRepairHours = 0;
+
+      leagueResults.forEach(r => {
+        fleetTotalOrders += (r.totalOrders || 0);
+        fleetCmCount += (r.cmCount || 0);
+        fleetRtPmCount += (r.rtPmCount || 0);
+        fleetActiveBacklog += (r.activeBacklog || 0);
+        fleetPmCompleted += (r.pmTotalCompleted || 0);
+        fleetPmOnTime += (r.pmCompletedOnTime || 0);
+        fleetBreakdowns += (r.breakdownCount || 0);
+        fleetRepairHours += (r.totalRepairHours || 0);
+      });
+
+      const fleetCmRatio = fleetTotalOrders > 0 ? ((fleetCmCount / fleetTotalOrders) * 100).toFixed(1) : '0.0';
+      const fleetTotalClassified = fleetCmCount + fleetRtPmCount || fleetTotalOrders;
+      const fleetRtRatio = fleetTotalClassified > 0 ? ((fleetRtPmCount / fleetTotalClassified) * 100).toFixed(1) : '100.0';
+      const fleetPmCompliance = fleetPmCompleted > 0
+        ? ((fleetPmOnTime / fleetPmCompleted) * 100).toFixed(1)
+        : (fleetRtPmCount > 0 ? '0.0' : '100.0');
+      const fleetMttr = fleetBreakdowns > 0
+        ? (fleetRepairHours > 0 ? (fleetRepairHours / fleetBreakdowns).toFixed(1) : '0.0')
+        : '0.0';
+
+      const portfolioAverage = {
+        totalSites: leagueResults.length,
+        totalOrders: fleetTotalOrders,
+        activeBacklog: fleetActiveBacklog,
+        cmRatio: `${fleetCmRatio}%`,
+        pmCompliance: `${fleetPmCompliance}%`,
+        mttrHours: `${fleetMttr}h`,
+        rtRatio: `${fleetRtRatio}%`
+      };
+
       return {
         benchmarkDate: new Date().toISOString(),
         activePeriod: periodParam,
         periodLabel: periodLabel,
         sitesEvaluated: leagueResults.length,
+        portfolioAverage,
         industryTargets: {
           cmRatioTarget: '< 20% (World Class)',
           pmComplianceTarget: '>= 90%',
@@ -2993,36 +3113,37 @@ export const maximoService = {
         periodHours = 30 * 24;
       }
 
-      let woRes;
-      try {
-        woRes = await maximoClient.get('/MXWO', {
-          params: {
-            'oslc.where': `siteid="${site}"${dateFilter}`,
-            'oslc.select': 'wonum,worktype,status,actstart,actfinish,targcompdate,actlabhrs,reportdate,assetnum',
-            'oslc.pageSize': 500,
-            'oslc.orderBy': '-reportdate',
-            'lean': 1
-          }
-        });
-      } catch (err) {
-        woRes = await maximoClient.get('/MXWO', {
-          params: {
-            'oslc.where': `siteid="${site}"`,
-            'oslc.select': 'wonum,worktype,status,actstart,actfinish,targcompdate,actlabhrs,reportdate,assetnum',
-            'oslc.pageSize': 500,
-            'oslc.orderBy': '-reportdate',
-            'lean': 1
-          }
-        });
-      }
+      // Query CM and PM distinct streams to accurately capture the entire period
+      // (Single queries capped at 500 can be completely consumed by a single day's massive PM batch on 2026-09-29)
+      const cmWhere = cutoffDate
+        ? `siteid="${site}" and worktype in ["CM","EM"] and reportdate>="${cutoffDate.toISOString().split('T')[0]}"`
+        : `siteid="${site}" and worktype in ["CM","EM"]`;
 
-      const allMembers = woRes.data?.member || [];
+      const pmWhere = cutoffDate
+        ? `siteid="${site}" and worktype in ["PM","RT"] and reportdate>="${cutoffDate.toISOString().split('T')[0]}"`
+        : `siteid="${site}" and worktype in ["PM","RT"]`;
+
+      const selectCols = 'wonum,worktype,status,actstart,actfinish,targcompdate,actlabhrs,reportdate,assetnum';
+
+      const [cmRes, pmRes] = await Promise.all([
+        maximoClient.get('/MXWO', {
+          params: { 'oslc.where': cmWhere, 'oslc.select': selectCols, 'oslc.pageSize': 500, 'oslc.orderBy': '-reportdate', 'lean': 1 }
+        }).catch(() => ({ data: { member: [] } })),
+        maximoClient.get('/MXWO', {
+          params: { 'oslc.where': pmWhere, 'oslc.select': selectCols, 'oslc.pageSize': 1000, 'oslc.orderBy': '-reportdate', 'lean': 1 }
+        }).catch(() => ({ data: { member: [] } }))
+      ]);
+
+      const cmMembers = cmRes.data?.member || [];
+      const pmMembers = pmRes.data?.member || [];
+      const combined = [...cmMembers, ...pmMembers];
+
       const records = cutoffDate
-        ? allMembers.filter(r => {
+        ? combined.filter(r => {
             const dVal = r.reportdate || r.actfinish || r.actstart;
             return dVal && new Date(dVal) >= cutoffDate;
           })
-        : allMembers;
+        : combined;
 
       let cmCount = 0;
       let pmRtCount = 0;
@@ -3070,7 +3191,11 @@ export const maximoService = {
           pmTotalScheduled++;
           if (status === 'COMP' || status === 'CLOSE') {
             if (r.actfinish && r.targcompdate) {
-              if (new Date(r.actfinish) <= new Date(r.targcompdate)) {
+              const fin = new Date(r.actfinish);
+              const targ = new Date(r.targcompdate);
+              // SMRP 10% / 7-Day Grace Window for work management documentation closure
+              const graceLimit = new Date(targ.getTime() + (7 * 24 * 60 * 60 * 1000));
+              if (fin <= graceLimit) {
                 pmCompletedOnTime++;
               }
             } else {
@@ -3086,6 +3211,12 @@ export const maximoService = {
       const cmRatio = totalEvaluated > 0
         ? Number(((cmCount / totalEvaluated) * 100).toFixed(1))
         : 0.0;
+
+      // CM to PM Ratio as clear percentage: (CM / PM) * 100
+      const cmToPmPercent = pmRtCount > 0
+        ? Number(((cmCount / pmRtCount) * 100).toFixed(1))
+        : (cmCount > 0 ? 100.0 : 0.0);
+      const cmToPmDisplay = `${cmToPmPercent}%`;
 
       const pmCompliance = pmTotalScheduled > 0
         ? Number(((pmCompletedOnTime / pmTotalScheduled) * 100).toFixed(1))
@@ -3130,6 +3261,9 @@ export const maximoService = {
           cmRatio: `${cmRatio}%`,
           cmRatioNumeric: cmRatio,
           cmRatioTarget: '< 20.0%',
+          cmToPmRatio: cmToPmDisplay,
+          cmToPmNumeric: cmToPmPercent,
+          cmToPmTarget: '< 25.0%',
           pmCompliance: `${pmCompliance}%`,
           pmComplianceNumeric: pmCompliance,
           pmComplianceTarget: '>= 90.0%',

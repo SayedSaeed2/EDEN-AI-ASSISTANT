@@ -3,16 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>IBM Maximo EAM Assistant - Login</title>
+  <title>EDEN Copilot - Login</title>
   
-  <!-- PWA & Mobile Web Meta -->
+  <!-- PWA & Mobile Web Meta (iOS & Android) -->
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#020617">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Maximo EAM">
-  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
-  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <meta name="apple-mobile-web-app-title" content="EDEN Copilot">
+  <meta name="application-name" content="EDEN Copilot">
+  
+  <!-- Favicon and App Icons -->
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-180.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png">
   <style>
     * {
       margin: 0;
@@ -303,6 +310,39 @@
       color: #64748b;
     }
 
+    /* Eden Animated Dynamic Typing Subtitle */
+    .typing-tagline-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      margin-top: 6px;
+      min-height: 20px;
+    }
+
+    .typing-text {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #38bdf8;
+      letter-spacing: 0.2px;
+      text-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
+    }
+
+    .typing-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 14px;
+      background: #38bdf8;
+      margin-left: 2px;
+      animation: blinkCursor 0.8s infinite;
+      box-shadow: 0 0 8px #38bdf8;
+    }
+
+    @keyframes blinkCursor {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
     /* Ambient Cybernetic Hacker News Ticker on Login */
     .eden-bg-narrative {
       position: absolute;
@@ -506,10 +546,6 @@
       .login-brand {
         margin-bottom: 16px;
       }
-
-      .eden-bg-narrative {
-        display: none;
-      }
     }
   </style>
 </head>
@@ -598,6 +634,10 @@
       <div>
         <div class="login-title">AI Operations Copilot</div>
         <div class="login-desc">Enterprise Asset &amp; Energy Management Portal</div>
+        <div class="typing-tagline-wrap">
+          <span class="typing-text" id="typing-text">Connecting to IBM Maximo EAM...</span>
+          <span class="typing-cursor"></span>
+        </div>
       </div>
     </div>
 
@@ -765,6 +805,48 @@
       requestAnimationFrame(animate);
     }
     animate();
+
+    // --- Dynamic Typewriter Subtitle Animation ---
+    const typewriterPhrases = [
+      "Optimizing Plant & Equipment Reliability...",
+      "Predictive Maintenance & OSLC Live Telemetry...",
+      "Autonomous Work Orders & Dispatch Assistant...",
+      "ISO 55001 Asset Criticality & RPN Scoring...",
+      "90% Self-Executed Manpower // Hassan Allam Holding",
+      "Real-time Inventory & Safety Stock Intelligence..."
+    ];
+
+    let phraseIndex = 0;
+    let charIndex = 0;
+    let isDeleting = false;
+    const typingElement = document.getElementById('typing-text');
+
+    function typeWriterLoop() {
+      if (!typingElement) return;
+      const currentPhrase = typewriterPhrases[phraseIndex];
+
+      if (isDeleting) {
+        typingElement.textContent = currentPhrase.substring(0, charIndex - 1);
+        charIndex--;
+      } else {
+        typingElement.textContent = currentPhrase.substring(0, charIndex + 1);
+        charIndex++;
+      }
+
+      let typeSpeed = isDeleting ? 30 : 65;
+
+      if (!isDeleting && charIndex === currentPhrase.length) {
+        typeSpeed = 2200; // Pause when phrase is complete
+        isDeleting = true;
+      } else if (isDeleting && charIndex === 0) {
+        isDeleting = false;
+        phraseIndex = (phraseIndex + 1) % typewriterPhrases.length;
+        typeSpeed = 400; // Brief pause before starting next phrase
+      }
+
+      setTimeout(typeWriterLoop, typeSpeed);
+    }
+    typeWriterLoop();
 
     // --- Login Form Handler ---
     const form = document.getElementById('login-form');

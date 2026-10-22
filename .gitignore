@@ -4,3 +4,9 @@ node_modules/
 *.log
 data/memory.md
 .DS_Store
+
+# User-specific attached files & uploads (Private per user)
+knowledge_docs/user_uploads/
+knowledge_docs/*/
+data/conversations/
+data/knowledge_index.json

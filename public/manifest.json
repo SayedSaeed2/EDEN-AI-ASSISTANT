@@ -1,20 +1,43 @@
 {
   "id": "/",
-  "name": "IBM Maximo EAM Assistant",
-  "short_name": "Maximo EAM",
-  "description": "Enterprise Asset Management AI Reliability Assistant for IBM Maximo",
+  "name": "EDEN Copilot",
+  "short_name": "EDEN Copilot",
+  "description": "Enterprise AI Operations & Asset Reliability Copilot for Eden Facility Management (Hassan Allam Holding) & IBM Maximo EAM",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#030712",
-  "theme_color": "#0284c7",
+  "theme_color": "#030712",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/icons/icon.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
     }
   ]
 }

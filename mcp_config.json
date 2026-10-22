@@ -1,10 +1,16 @@
 {
   "mcpServers": {
-    "weather": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-everything"],
-      "enabled": false,
-      "description": "Example reference MCP server"
+    "maximo_guys_mas9": {
+      "command": "node",
+      "args": ["node_modules/@themaximoguys/maximo-mcp/dist/bundle.js"],
+      "env": {
+        "MAXIMO_HOST": "http://172.16.128.18:9070",
+        "MAXIMO_API_KEY": "kr87423897l3fu7qhffrl3q662kd2uec4gfue60c",
+        "LOG_LEVEL": "warn",
+        "CACHE_ENABLED": "true"
+      },
+      "enabled": true,
+      "description": "175 MAS 9.x Enterprise Tools across 20 modules by The Maximo Guys"
     }
   }
 }

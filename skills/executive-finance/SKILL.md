@@ -10,9 +10,13 @@ commands:
   - command: "/cost-summary"
     description: "Detailed financial breakdown across Labor, Materials, Services/Contractors, and Tools"
     example: "/cost-summary"
+  - command: "/roi"
+    description: "Calculate executive ROI & maintenance cost avoidance scorecard (catastrophic failures, self-execution savings, energy)"
+    example: "/roi"
 tools:
   - get_budget_variance_analysis
   - get_executive_cost_summary
+  - get_executive_roi_cost_avoidance
 ---
 
 # Executive Financial Governance & Cost Variance Skill

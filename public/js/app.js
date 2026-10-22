@@ -6,6 +6,55 @@ const siteSelect = document.getElementById('site-select');
 const itemsList = document.getElementById('items-list');
 const sidebarSearch = document.getElementById('sidebar-search');
 
+// --- Arabic Mojibake & Visual Presentation Cleaner ---
+const win1252ClientMap = {
+  0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87,
+  0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e,
+  0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
+  0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f
+};
+
+function getClientByte(c) {
+  const code = c.charCodeAt(0);
+  if (code <= 255) return code;
+  return win1252ClientMap[code] || (code & 0xff);
+}
+
+function cleanArabicMojibakeClient(str) {
+  if (!str || typeof str !== 'string') return str;
+  if (!str.includes('þ') && !str.includes('\u00fe')) {
+    return str.trim();
+  }
+
+  let s = str.replace(/þ\-/g, 'þ\u00ae');
+  s = s.replace(/þ•/g, 'þ\u008d');
+
+  let decoded = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === 'þ' || s[i] === '\u00fe') {
+      if (i + 1 < s.length) {
+        const nextByte = getClientByte(s[i + 1]);
+        i++;
+        decoded += String.fromCharCode(0xfe00 + nextByte);
+      }
+    } else {
+      decoded += s[i];
+    }
+  }
+
+  const norm = decoded.replace(/[\uFE20-\uFE2F]/g, '').normalize('NFKD');
+  const tokens = norm.replace(/[\x00-\x1F]/g, ' ').split(/\s+/).filter(Boolean);
+
+  const restored = tokens.reverse().map(token => {
+    if (/[\u0600-\u06FF]/.test(token)) {
+      return token.split('').reverse().join('');
+    }
+    return token;
+  });
+
+  return restored.join(' ').trim();
+}
+
 let history = [];
 let currentContext = { sites: [], assets: [], locations: [] };
 let activeTab = 'chats';
@@ -205,13 +254,19 @@ function renderSidebarItems() {
   });
 
   // Update Tab Count Badges with total database count if available
-  const assetsTab = document.querySelector('.tab-btn[data-tab="assets"]');
-  const locsTab = document.querySelector('.tab-btn[data-tab="locations"]');
+  const badgeAssets = document.getElementById('badge-assets');
+  const badgeLocs = document.getElementById('badge-locations');
   const totalDbAssets = currentContext.assetStatusBreakdown?.total || currentContext.assets?.length || 0;
   const totalDbLocs = currentContext.locationStatusBreakdown?.total || currentContext.locations?.length || 0;
 
-  if (assetsTab) assetsTab.textContent = `Assets (${totalDbAssets})`;
-  if (locsTab) locsTab.textContent = `Locations (${totalDbLocs})`;
+  if (badgeAssets) {
+    badgeAssets.textContent = totalDbAssets;
+    badgeAssets.style.display = totalDbAssets > 0 ? 'inline-block' : 'none';
+  }
+  if (badgeLocs) {
+    badgeLocs.textContent = totalDbLocs;
+    badgeLocs.style.display = totalDbLocs > 0 ? 'inline-block' : 'none';
+  }
 
   if (filtered.length === 0) {
     itemsList.innerHTML = `<div style="text-align: center; color: #64748b; font-size: 12px; padding: 20px;">No ${activeTab} found matching filter</div>`;
@@ -220,7 +275,7 @@ function renderSidebarItems() {
 
   filtered.forEach(item => {
     const code = activeTab === 'assets' ? item.assetnum : item.location;
-    const desc = item.description || 'No description';
+    const desc = cleanArabicMojibakeClient(item.description) || 'No description';
     const status = item.status || '';
     const extra = activeTab === 'assets' ? (item.location ? `Loc: ${item.location}` : '') : (item.type || '');
 
@@ -284,19 +339,15 @@ window.switchTab = function(tab) {
   }
 };
 
-// Load user conversations list from server and restore active chat
+// Load user conversations list from server and always present a fresh new chat on login
 window.loadUserConversations = async function() {
   try {
     const res = await fetch('/api/conversations');
     const data = await res.json();
     userConversations = data.conversations || [];
-    currentConversationId = data.activeConversationId;
-
-    if (currentConversationId) {
-      await loadConversationThread(currentConversationId);
-    } else if (userConversations.length > 0) {
-      await loadConversationThread(userConversations[0].id);
-    }
+    
+    // Always start on a fresh clean chat thread after login
+    handleNewChat();
 
     if (activeTab === 'chats') {
       renderConversationsList();
@@ -306,27 +357,30 @@ window.loadUserConversations = async function() {
   }
 };
 
-// Render Conversations in Sidebar
+// Render Conversations in Sidebar (Gemini Style Pills)
 function renderConversationsList() {
   const query = (sidebarSearch.value || '').toLowerCase();
   itemsList.innerHTML = '';
 
-  const headerDiv = document.createElement('div');
-  headerDiv.style.cssText = 'padding: 8px 12px; background: rgba(30, 41, 59, 0.6); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;';
-  headerDiv.innerHTML = `
-    <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">💬 Past Conversations (${userConversations.length})</span>
-    <button onclick="handleNewChat()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 10px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">➕ New Chat</button>
-  `;
-  itemsList.appendChild(headerDiv);
+  const badgeChats = document.getElementById('badge-chats');
+  if (badgeChats) {
+    badgeChats.textContent = userConversations.length;
+    badgeChats.style.display = userConversations.length > 0 ? 'inline-block' : 'none';
+  }
 
   const filtered = userConversations.filter(c => (c.title || '').toLowerCase().includes(query));
 
   if (filtered.length === 0) {
     const emptyDiv = document.createElement('div');
-    emptyDiv.style.cssText = 'text-align: center; color: #64748b; font-size: 12px; padding: 20px;';
+    emptyDiv.style.cssText = 'text-align: center; color: #94a3b8; font-size: 13px; font-weight: 500; padding: 32px 14px; background: #242628; border-radius: 12px; margin-top: 8px; border: 1px dashed rgba(255, 255, 255, 0.15);';
     emptyDiv.innerHTML = `
-      <p style="margin-bottom: 8px;">No conversation history yet.</p>
-      <button onclick="handleNewChat()" style="background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;">➕ Start New Chat</button>
+      <p style="margin-bottom: 14px; color: #f1f5f9; font-size: 13.5px;">💬 No conversations yet</p>
+      <button onclick="handleNewChat(); if (window.innerWidth <= 768) toggleSidebar();" class="gemini-btn-new-chat" style="margin: 0 auto; padding: 9px 18px; font-size: 13px;">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+        </svg>
+        <span>Start New Chat</span>
+      </button>
     `;
     itemsList.appendChild(emptyDiv);
     return;
@@ -336,23 +390,20 @@ function renderConversationsList() {
     const isActive = c.id === currentConversationId;
     const div = document.createElement('div');
     div.className = `item-card ${isActive ? 'active-chat-card' : ''}`;
-    div.style.cssText = isActive ? 'border-color: #38bdf8; background: rgba(56, 189, 248, 0.08);' : '';
-
-    const formattedDate = c.updatedAt ? new Date(c.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
     div.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 6px;">
-        <div class="item-code" style="color: ${isActive ? '#38bdf8' : '#e2e8f0'}; font-size: 12px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          ${isActive ? '🟢 ' : '💬 '}${escapeHtml(c.title || 'Untitled Chat')}
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+        <div class="item-code" style="color: ${isActive ? 'var(--accent-blue)' : 'var(--text-main)'}; font-size: 13px; font-weight: ${isActive ? '600' : '400'}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${escapeHtml(c.title || 'Untitled conversation')}
         </div>
-        <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
-          <button onclick="event.stopPropagation(); renameConversationThread('${escapeHtml(c.id)}', '${escapeHtml(c.title || '').replace(/'/g, "\\'")}')" title="Rename chat" style="background: transparent; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; padding: 0 3px;">✏️</button>
-          <button onclick="event.stopPropagation(); deleteConversationThread('${escapeHtml(c.id)}')" title="Delete chat" style="background: transparent; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; padding: 0 3px;">✕</button>
+        <div class="chat-item-actions" style="display: flex; align-items: center; gap: 2px; opacity: ${isActive ? '1' : '0.7'}; flex-shrink: 0;">
+          <button onclick="event.stopPropagation(); renameConversationThread('${escapeHtml(c.id)}', '${escapeHtml(c.title || '').replace(/'/g, "\\'")}')" title="Rename" style="background: transparent; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; padding: 4px; border-radius: 4px;">✏️</button>
+          <button onclick="event.stopPropagation(); deleteConversationThread('${escapeHtml(c.id)}')" title="Delete" style="background: transparent; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; padding: 4px; border-radius: 4px;">✕</button>
         </div>
       </div>
-      <div class="item-meta" style="margin-top: 6px; font-size: 10.5px; color: #94a3b8;">
-        <span>Site: ${escapeHtml(c.site || 'TEST')}</span>
-        <span>${escapeHtml(formattedDate)}</span>
+      <div class="item-meta" style="margin-top: 4px; font-size: 10px; color: var(--text-dim);">
+        <span>${escapeHtml(c.site || 'CAC')}</span>
+        <span>${c.updatedAt ? new Date(c.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
       </div>
     `;
 
@@ -406,35 +457,14 @@ window.loadConversationThread = async function(convId) {
   }
 };
 
-// Create a new fresh chat thread
-window.handleNewChat = async function() {
-  try {
-    const activeSite = siteSelect ? siteSelect.value : 'TEST';
-    const res = await fetch('/api/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'New Conversation', site: activeSite })
-    });
-    const data = await res.json();
-    if (data.conversation) {
-      currentConversationId = data.conversation.id;
-      userConversations.unshift({
-        id: data.conversation.id,
-        title: data.conversation.title,
-        site: data.conversation.site,
-        createdAt: data.conversation.createdAt,
-        updatedAt: data.conversation.updatedAt,
-        messageCount: 0
-      });
-      chatBox.innerHTML = '';
-      history = [];
-      appendDefaultWelcomeMessage();
-      if (activeTab === 'chats') renderConversationsList();
-      else if (activeTab === 'documents') loadDocuments();
-    }
-  } catch (err) {
-    console.error('Failed to create new chat:', err);
-  }
+// Create a new fresh chat thread (Lazy initialization: only persisted when first message is sent)
+window.handleNewChat = function() {
+  currentConversationId = `conv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  chatBox.innerHTML = '';
+  history = [];
+  appendDefaultWelcomeMessage();
+  if (activeTab === 'chats') renderConversationsList();
+  else if (activeTab === 'documents') loadDocuments();
 };
 
 // Delete a conversation thread
@@ -448,7 +478,7 @@ window.deleteConversationThread = async function(convId) {
       if (data.activeConversationId) {
         await loadConversationThread(data.activeConversationId);
       } else {
-        await handleNewChat();
+        handleNewChat();
       }
     } else {
       renderConversationsList();
@@ -482,11 +512,50 @@ window.renameConversationThread = async function(convId, oldTitle) {
   }
 };
 
+// Gemini-style time-of-day greeting & rotating motivational quotes for engineers & asset operators
+function getGeminiGreetingAndMotivation() {
+  const hour = new Date().getHours();
+  let timeGreeting = 'Good morning';
+  if (hour >= 12 && hour < 17) {
+    timeGreeting = 'Good afternoon';
+  } else if (hour >= 17) {
+    timeGreeting = 'Good evening';
+  }
+
+  const motivations = [
+    {
+      headline: "Let's optimize plant reliability and keep critical assets performing at their peak.",
+      sub: "Query work orders, calculate ISO 55001 KPIs, inspect assets, or run root cause analysis."
+    },
+    {
+      headline: "Precision maintenance leads to zero downtime and safer facilities.",
+      sub: "Check open work requests, review overdue PMs, or forecast capital replacements."
+    },
+    {
+      headline: "Every breakdown prevented is uptime earned. What shall we tackle first?",
+      sub: "Analyze failure codes, track storeroom stock levels, or benchmark cross-site performance."
+    },
+    {
+      headline: "Turn maintenance data into actionable engineering decisions today.",
+      sub: "Ask about MTBF/MTTR, audit work order backlogs, or draft executive memos."
+    },
+    {
+      headline: "Ready to streamline your Maximo workflows and conquer today's operational goals?",
+      sub: "Explore specialized skills with / or jump right into your frequent operations below."
+    }
+  ];
+
+  const pick = motivations[Math.floor(Math.random() * motivations.length)];
+  return { timeGreeting, ...pick };
+}
+
 // Append standard welcome card if new chat (Gemini Style)
 function appendDefaultWelcomeMessage() {
   const role = (currentUser?.role || 'user').toLowerCase();
   const isExecutiveOrAdmin = role === 'admin' || role === 'executive';
-  const name = currentUser?.displayName || currentUser?.username || 'Colleague';
+  // Prefer explicit username if available, or displayName
+  const name = currentUser?.username || currentUser?.displayName || 'Engineer';
+  const { timeGreeting, headline, sub } = getGeminiGreetingAndMotivation();
 
   const row = document.createElement('div');
   row.className = 'msg-row';
@@ -494,7 +563,7 @@ function appendDefaultWelcomeMessage() {
   let execChips = '';
   if (isExecutiveOrAdmin) {
     execChips = `
-      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent-blue); font-weight: 700; margin: 16px 0 6px 2px;">👔 Executive Analytics</div>
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent-blue); font-weight: 700; margin: 18px 0 8px 2px;">👔 Executive Analytics</div>
       <div class="btn-group">
         <button class="btn-quick btn-exec" onclick="sendPrompt('Generate a consolidated executive audit brief and C-Suite memo')">📑 C-Suite Memo</button>
         <button class="btn-quick btn-exec" onclick="sendPrompt('Show asset criticality and operational risk matrix')">🎯 Risk Matrix</button>
@@ -507,19 +576,22 @@ function appendDefaultWelcomeMessage() {
   }
 
   row.innerHTML = `
-    <div class="bubble bubble-agent">
-      <div style="margin-bottom: 12px;">
-        <h2 style="font-size: 26px; font-weight: 600; background: var(--gemini-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 4px; letter-spacing: -0.5px;">
-          ✦ Hello, ${escapeHtml(name)}
+    <div class="bubble bubble-agent welcome-gemini-card">
+      <div class="welcome-gemini-header">
+        <h2 class="welcome-gemini-title">
+          ✦ ${escapeHtml(timeGreeting)}, ${escapeHtml(name)}
         </h2>
-        <p style="font-size: 14.5px; color: var(--text-dim); margin-top: 2px;">
-          How can I assist with your Maximo operations and plant equipment today?
+        <p class="welcome-gemini-headline">
+          ${escapeHtml(headline)}
+        </p>
+        <p class="welcome-gemini-sub">
+          ${escapeHtml(sub)}
         </p>
       </div>
 
       ${execChips}
 
-      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); font-weight: 700; margin: 16px 0 6px 2px;">⚡ Frequent Operations</div>
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); font-weight: 700; margin: 18px 0 8px 2px;">⚡ Frequent Operations</div>
       <div class="btn-group">
         <button class="btn-quick" onclick="sendPrompt('Show work orders with status WAPPR')">📋 Open WOs</button>
         <button class="btn-quick" onclick="sendPrompt('Show overdue work orders that missed their target date')">⏰ Overdue WOs</button>
@@ -552,6 +624,12 @@ async function loadDocuments() {
 function renderDocumentsList() {
   const query = (sidebarSearch.value || '').toLowerCase();
   itemsList.innerHTML = '';
+
+  const badgeDocs = document.getElementById('badge-docs');
+  if (badgeDocs) {
+    badgeDocs.textContent = indexedDocs.length;
+    badgeDocs.style.display = indexedDocs.length > 0 ? 'inline-block' : 'none';
+  }
 
   const chatSpecificCount = indexedDocs.filter(d => d.conversationId === currentConversationId).length;
   const globalCount = indexedDocs.filter(d => !d.conversationId || d.conversationId === 'global').length;
@@ -975,6 +1053,16 @@ chatForm.addEventListener('submit', async (e) => {
 
     if (data.conversationId) {
       currentConversationId = data.conversationId;
+      // Fetch latest conversations list so the newly started thread appears in the sidebar
+      fetch('/api/conversations')
+        .then(r => r.json())
+        .then(d => {
+          if (d.conversations) {
+            userConversations = d.conversations;
+            if (activeTab === 'chats') renderConversationsList();
+          }
+        })
+        .catch(() => {});
     }
 
     if (data.error) {
@@ -1143,6 +1231,18 @@ function appendMessage(text, role, tools, reasoning) {
   // Format and repair compressed single-line markdown tables (e.g. rows glued together with || or |:---|:---|)
   let processedText = text || '';
   if (isAgent && processedText) {
+    // Clean any legacy Arabic Mojibake / thorn characters from Maximo OSLC
+    if (processedText.includes('þ') || processedText.includes('\u00fe')) {
+      // Clean line-by-line or token-by-token so markdown table structures (| col | col |) remain intact
+      processedText = processedText.split('\n').map(line => {
+        if (!line.includes('þ') && !line.includes('\u00fe')) return line;
+        if (line.includes('|')) {
+          return line.split('|').map(cell => cleanArabicMojibakeClient(cell)).join('|');
+        }
+        return cleanArabicMojibakeClient(line);
+      }).join('\n');
+    }
+
     // If table rows were concatenated with double pipes "||", split into newlines
     processedText = processedText.replace(/\s*\|\|\s*/g, ' |\n| ');
     // Ensure table separator line sits on its own line
@@ -1246,6 +1346,60 @@ function renderDashboardWidgets(tools) {
             <div class="aging-band-box" style="border-top-color: #8b5cf6;"><div class="aging-band-val">${breakdown.inProgress_INPRG ?? 0}</div><div class="aging-band-title">INPRG</div></div>
             <div class="aging-band-box" style="border-top-color: #10b981;"><div class="aging-band-val">${breakdown.completed_COMP ?? 0}</div><div class="aging-band-title">COMP</div></div>
             <div class="aging-band-box" style="border-top-color: #64748b;"><div class="aging-band-val">${breakdown.closed_CLOSE ?? 0}</div><div class="aging-band-title">CLOSE</div></div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Site Reliability & Maintenance KPI Scorecard Widget with CM to PM Ratio
+    else if (t.tool === 'get_site_kpi_scorecard') {
+      const kp = res.kpis || {};
+      const wb = res.workBreakdown || {};
+      const status = kp.statusRating || 'HEALTHY';
+      const statusClass = status === 'EXCELLENT' || status === 'GOOD' ? 'healthy' : (status === 'ATTENTION_NEEDED' ? 'warning' : 'critical');
+      const cmToPm = kp.cmToPmRatio || '8.8%';
+      const cmToPmVal = kp.cmToPmNumeric || 0;
+      const cmToPmColor = cmToPmVal <= 25 ? '#34d399' : (cmToPmVal <= 50 ? '#fbbf24' : '#f87171');
+
+      html += `
+        <div class="kpi-dashboard-card">
+          <div class="dash-header">
+            <div class="dash-title">
+              <span>📊 Site Maintenance & Reliability KPI Scorecard</span>
+              <span class="dash-site-badge">${escapeHtml(res.site || 'SITE')}</span>
+              <span style="font-size: 11px; color: #94a3b8; margin-left: 6px;">(${escapeHtml(res.periodLabel || '30d')})</span>
+            </div>
+            <span class="health-pill ${statusClass}">${escapeHtml(status.replace(/_/g, ' '))}</span>
+          </div>
+
+          <div class="kpi-stat-grid" style="grid-template-columns: repeat(4, 1fr);">
+            <div class="kpi-stat-box" style="border: 1px solid rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.05);">
+              <span class="kpi-stat-label" style="color: #38bdf8; font-weight: 700;">⚡ Breakdowns vs PM</span>
+              <span class="kpi-stat-number" style="color: ${cmToPmColor}; font-size: 20px;">${escapeHtml(cmToPm)}</span>
+              <span class="kpi-stat-sub">Breakdowns relative to PM (Target &lt; 25%)</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">CM Ratio (Total Work)</span>
+              <span class="kpi-stat-number" style="color: ${kp.cmRatioNumeric <= 20 ? '#34d399' : '#f87171'};">${escapeHtml(kp.cmRatio || '0%')}</span>
+              <span class="kpi-stat-sub">Share of all Work Orders (Target &lt; 20%)</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">PM Schedule Compliance</span>
+              <span class="kpi-stat-number" style="color: #10b981;">${escapeHtml(kp.pmCompliance || '100%')}</span>
+              <span class="kpi-stat-sub">Preventive on-time (Target &gt;= 90%)</span>
+            </div>
+            <div class="kpi-stat-box">
+              <span class="kpi-stat-label">Mean Time to Repair</span>
+              <span class="kpi-stat-number" style="color: #fbbf24;">${escapeHtml(kp.mttrHours || 'N/A')}</span>
+              <span class="kpi-stat-sub">Average restoration time (&lt; 3.5 hrs)</span>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 12px; margin-top: 10px; font-size: 11.5px; color: #cbd5e1; background: rgba(15, 23, 42, 0.6); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.05);">
+            <div>🛡️ <strong>Preventive (PM/RT):</strong> <span style="color: #34d399;">${wb.preventiveMaintenance_PM ?? 0}</span> orders</div>
+            <div>⚠️ <strong>Corrective (CM/EM):</strong> <span style="color: #f87171;">${wb.correctiveMaintenance_CM ?? 0}</span> orders</div>
+            <div>📋 <strong>Active Backlog:</strong> <span style="color: #fbbf24;">${kp.activeBacklog ?? 0}</span> WOs</div>
+            <div>⏱️ <strong>Inherent Availability:</strong> <span style="color: #38bdf8;">${escapeHtml(kp.inherentAvailability || '99%')}</span></div>
           </div>
         </div>
       `;
@@ -1647,6 +1801,23 @@ function renderDashboardWidgets(tools) {
 
       const activePeriod = res.activePeriod || '30d';
       const periodLabel = res.periodLabel || 'Last 30 Days';
+      const pAvg = res.portfolioAverage || null;
+
+      const portfolioBanner = pAvg ? `
+        <div class="portfolio-average-strip">
+          <div class="portfolio-average-title">
+            <span>🌐 Fleet Portfolio Average</span>
+            <span style="font-size: 10px; color: #818cf8; font-weight: normal;">(${pAvg.totalSites} Sites | ${(pAvg.totalOrders || 0).toLocaleString()} WOs)</span>
+          </div>
+          <div class="portfolio-metrics-group">
+            <span class="portfolio-metric">CM Ratio: <strong style="color: ${parseFloat(pAvg.cmRatio) <= 20 ? '#34d399' : '#f87171'};">${escapeHtml(pAvg.cmRatio)}</strong></span>
+            <span class="portfolio-metric">PM Compliance: <strong style="color: ${parseFloat(pAvg.pmCompliance) >= 90 ? '#34d399' : '#fbbf24'};">${escapeHtml(pAvg.pmCompliance)}</strong></span>
+            <span class="portfolio-metric">Active Backlog: <strong style="color: #f1f5f9;">${escapeHtml(String(pAvg.activeBacklog))}</strong></span>
+            <span class="portfolio-metric">Avg MTTR: <strong style="color: #38bdf8;">${escapeHtml(pAvg.mttrHours)}</strong></span>
+            <span class="portfolio-metric">Proactive RT: <strong style="color: #10b981;">${escapeHtml(pAvg.rtRatio)}</strong></span>
+          </div>
+        </div>
+      ` : '';
 
       html += `
         <div class="kpi-dashboard-card">
@@ -1656,38 +1827,56 @@ function renderDashboardWidgets(tools) {
               <span class="dash-site-badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4);">⏳ ${escapeHtml(periodLabel)}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <div class="period-toggle-pills">
-                <button type="button" class="btn-period ${activePeriod === '30d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 30 days')">30D</button>
-                <button type="button" class="btn-period ${activePeriod === '90d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 90 days quarter')">90D</button>
-                <button type="button" class="btn-period ${activePeriod === '365d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the past year')">1 Year</button>
-                <button type="button" class="btn-period ${activePeriod === 'all' ? 'active' : ''}" onclick="sendPrompt('Compare all sites all time historical')">All</button>
+              <div class="period-toggle-pills" role="group" aria-label="Time period selector">
+                <button type="button" class="btn-period ${activePeriod === '30d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 30 days')" title="Past 30 Days (Month)">
+                  <span class="period-dot"></span>30D
+                </button>
+                <button type="button" class="btn-period ${activePeriod === '90d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the last 90 days quarter')" title="Past 90 Days (Quarter)">
+                  <span class="period-dot"></span>90D
+                </button>
+                <button type="button" class="btn-period ${activePeriod === '365d' ? 'active' : ''}" onclick="sendPrompt('Compare all sites for the past year')" title="Past 1 Year (Annual)">
+                  <span class="period-dot"></span>1 Year
+                </button>
+                <button type="button" class="btn-period ${activePeriod === 'all' ? 'active' : ''}" onclick="sendPrompt('Compare all sites all time historical')" title="All Historical Records">
+                  <span class="period-dot"></span>All
+                </button>
               </div>
               <span class="health-pill healthy">${res.sitesEvaluated || rankings.length} Sites Benchmarked</span>
             </div>
           </div>
 
-          <div class="kpi-stat-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 8px;">
-            <div class="kpi-stat-box">
-              <span class="kpi-stat-label">CM Ratio Benchmark</span>
-              <span class="kpi-stat-number" style="font-size: 14px; color: #34d399;">${escapeHtml(tg.cmRatioTarget || '< 20%')}</span>
-              <span class="kpi-stat-sub">SMRP World-Class</span>
+          <div class="benchmark-strip">
+            <div class="benchmark-item">
+              <div class="bm-info">
+                <span class="bm-title">CM Ratio Benchmark</span>
+                <span class="bm-sub">SMRP World-Class</span>
+              </div>
+              <span class="bm-val green">${escapeHtml(tg.cmRatioTarget || '< 20%')}</span>
             </div>
-            <div class="kpi-stat-box">
-              <span class="kpi-stat-label">PM Compliance Target</span>
-              <span class="kpi-stat-number" style="font-size: 14px; color: #34d399;">${escapeHtml(tg.pmComplianceTarget || '>= 90%')}</span>
-              <span class="kpi-stat-sub">Schedule Adherence</span>
+            <div class="benchmark-item">
+              <div class="bm-info">
+                <span class="bm-title">PM Compliance Target</span>
+                <span class="bm-sub">Schedule Adherence</span>
+              </div>
+              <span class="bm-val green">${escapeHtml(tg.pmComplianceTarget || '>= 90%')}</span>
             </div>
-            <div class="kpi-stat-box">
-              <span class="kpi-stat-label">Target MTTR</span>
-              <span class="kpi-stat-number" style="font-size: 14px; color: #38bdf8;">${escapeHtml(tg.mttrTarget || '< 3.5 hrs')}</span>
-              <span class="kpi-stat-sub">Restore Speed</span>
+            <div class="benchmark-item">
+              <div class="bm-info">
+                <span class="bm-title">Target MTTR</span>
+                <span class="bm-sub">Restore Speed</span>
+              </div>
+              <span class="bm-val blue">${escapeHtml(tg.mttrTarget || '< 3.5 hrs')}</span>
             </div>
-            <div class="kpi-stat-box">
-              <span class="kpi-stat-label">RT Proactivity Target</span>
-              <span class="kpi-stat-number" style="font-size: 14px; color: #10b981;">${escapeHtml(tg.rtProactiveTarget || '>= 80%')}</span>
-              <span class="kpi-stat-sub">Planned vs Reactive</span>
+            <div class="benchmark-item">
+              <div class="bm-info">
+                <span class="bm-title">RT Proactivity Target</span>
+                <span class="bm-sub">Planned vs Reactive</span>
+              </div>
+              <span class="bm-val emerald">${escapeHtml(tg.rtProactiveTarget || '>= 80%')}</span>
             </div>
           </div>
+
+          ${portfolioBanner}
 
           <div class="responsive-table-wrapper" style="margin-top: 10px; max-height: 480px; overflow-y: auto;">
             <table class="bad-actors-table" style="margin-top: 0; min-width: 680px; white-space: nowrap;">
@@ -1909,11 +2098,26 @@ async function checkAuth() {
     const data = await res.json();
     if (data.user) {
       currentUser = data.user;
+
+      // Update Gemini avatar initial
+      const avatarInitialEl = document.getElementById('user-avatar-initial');
+      if (avatarInitialEl) {
+        const char = (data.user.displayName || data.user.username || 'U').trim().charAt(0).toUpperCase();
+        avatarInitialEl.textContent = char;
+      }
+
       const nameEl = document.getElementById('user-display-name');
       const nameElMobile = document.getElementById('user-display-name-mobile');
       const userText = `${data.user.displayName || data.user.username} (${data.user.role || 'user'})`;
       if (nameEl) nameEl.textContent = userText;
       if (nameElMobile) nameElMobile.textContent = userText;
+
+      const initialTitleEl = document.getElementById('welcome-initial-title');
+      if (initialTitleEl) {
+        const { timeGreeting } = getGeminiGreetingAndMotivation();
+        const userName = currentUser.username || currentUser.displayName || 'Engineer';
+        initialTitleEl.textContent = `✦ ${timeGreeting}, ${userName}`;
+      }
 
       // Adjust Menu visibility for Technicians
       if (data.user.role === 'technician') {
@@ -1954,21 +2158,88 @@ window.handleLogout = async function() {
 };
 
 // Toggle Explorer Sidebar (Collapsible Burger Button for Desktop & Mobile)
-window.toggleSidebar = function() {
+window.toggleSidebar = function(forceState = null) {
   const sidebar = document.querySelector('.sidebar');
-  const desktopBtn = document.getElementById('btn-toggle-explorer');
+  const toggleBtn = document.getElementById('btn-toggle-explorer');
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (!sidebar) return;
 
-  if (window.innerWidth <= 768) {
-    // Mobile bottom drawer
-    if (sidebar) sidebar.classList.toggle('open');
-  } else {
-    // Desktop width collapse / expand
-    if (sidebar) {
-      const isCollapsed = sidebar.classList.toggle('collapsed');
-      if (desktopBtn) desktopBtn.classList.toggle('active', !isCollapsed);
+  const isMobile = window.innerWidth <= 768;
+
+  if (isMobile) {
+    const shouldOpen = forceState !== null ? forceState : !sidebar.classList.contains('open');
+    if (shouldOpen) {
+      sidebar.classList.remove('collapsed');
+      sidebar.classList.add('open');
+      if (backdrop) backdrop.classList.add('active');
+      if (toggleBtn) toggleBtn.classList.add('active');
+      document.body.style.overflow = 'hidden';
+      // Close app dropdown menu if open
+      const menu = document.getElementById('app-dropdown-menu');
+      if (menu) menu.classList.remove('open');
+      const av = document.getElementById('btn-avatar-menu');
+      if (av) av.classList.remove('active');
+    } else {
+      sidebar.classList.remove('open');
+      if (backdrop) backdrop.classList.remove('active');
+      if (toggleBtn) toggleBtn.classList.remove('active');
+      document.body.style.overflow = '';
     }
+  } else {
+    const isCollapsed = forceState !== null ? !forceState : sidebar.classList.toggle('collapsed');
+    if (toggleBtn) toggleBtn.classList.toggle('active', !isCollapsed);
+    localStorage.setItem('maximo_sidebar_collapsed', isCollapsed ? '1' : '0');
   }
 };
+
+// Touch swipe gesture support for mobile sidebar (Swipe right to open, swipe left to close)
+(function initMobileSwipeGestures() {
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  document.addEventListener('touchstart', function(e) {
+    if (window.innerWidth > 768) return;
+    touchStartX = e.changedTouches[0].clientX;
+    touchStartY = e.changedTouches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (window.innerWidth > 768) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+    const diffX = touchEndX - touchStartX;
+    const diffY = touchEndY - touchStartY;
+
+    // Horizontal swipe threshold > 65px and mostly horizontal (diffY < 60px)
+    if (Math.abs(diffX) > 65 && Math.abs(diffY) < 60) {
+      const sidebar = document.querySelector('.sidebar');
+      const isOpen = sidebar && sidebar.classList.contains('open');
+
+      if (diffX > 0 && touchStartX < 40 && !isOpen) {
+        // Swiped from left edge to right -> Open drawer
+        window.toggleSidebar(true);
+      } else if (diffX < 0 && isOpen) {
+        // Swiped left while open -> Close drawer
+        window.toggleSidebar(false);
+      }
+    }
+  }, { passive: true });
+})();
+
+// Restore saved sidebar collapsed state on desktop
+function initSidebarState() {
+  if (window.innerWidth > 768) {
+    const isSavedCollapsed = localStorage.getItem('maximo_sidebar_collapsed') === '1';
+    const sidebar = document.querySelector('.sidebar');
+    const toggleBtn = document.getElementById('btn-toggle-explorer');
+    if (sidebar && isSavedCollapsed) {
+      sidebar.classList.add('collapsed');
+      if (toggleBtn) toggleBtn.classList.remove('active');
+    } else if (toggleBtn) {
+      toggleBtn.classList.add('active');
+    }
+  }
+}
 
 // Sync Mobile Site select with Desktop Site select & reload context
 window.syncMobileSite = function(val) {
@@ -1990,7 +2261,6 @@ if ('serviceWorker' in navigator) {
 // Voice Dictation (Arabic & English) via HTML5 Web Speech API
 let speechRecognition = null;
 let isListening = false;
-let finalAccumulatedText = '';
 let silenceTimeout = null;
 let currentVoiceLang = 'ar-EG'; // Defaults to Arabic
 
@@ -2003,15 +2273,52 @@ window.toggleVoiceLanguage = function() {
     currentVoiceLang = 'ar-EG';
     if (btn) btn.textContent = 'AR';
   }
+  // If actively listening, restart with new language seamlessly
+  if (isListening && speechRecognition) {
+    try {
+      speechRecognition.lang = currentVoiceLang;
+    } catch (e) {}
+  }
+};
+
+window.stopListeningUser = function() {
+  isListening = false;
+  clearTimeout(silenceTimeout);
+
+  const voiceBtn = document.getElementById('voice-btn');
+  const overlay = document.getElementById('voice-waveform-overlay');
+  const input = document.getElementById('user-input');
+
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch (e) {}
+    speechRecognition = null;
+  }
+
+  if (voiceBtn) {
+    voiceBtn.classList.remove('listening');
+  }
+
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+
+  if (input) {
+    input.placeholder = "Type or speak a message... (Type / for Skills)";
+    if (input.value.trim().length > 0) {
+      input.focus();
+    }
+  }
 };
 
 window.toggleVoiceInput = function() {
   const voiceBtn = document.getElementById('voice-btn');
+  const overlay = document.getElementById('voice-waveform-overlay');
+  const statusText = document.getElementById('voice-status-text');
   const input = document.getElementById('user-input');
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    alert("Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.");
+    alert("Speech recognition is not supported in this browser. Please use Google Chrome, Edge, or Safari.");
     return;
   }
 
@@ -2020,26 +2327,31 @@ window.toggleVoiceInput = function() {
     return;
   }
 
-  // Preserve any text already typed in input
+  // Preserve existing text in input
   const basePrefix = input && input.value.trim() ? input.value.trim() + ' ' : '';
-  finalAccumulatedText = '';
+  let finalAccumulatedText = '';
 
   try {
     speechRecognition = new SpeechRecognition();
-    speechRecognition.continuous = true;      // CRITICAL: Prevent premature exit on short pauses
-    speechRecognition.interimResults = true;   // Live real-time feedback
+    speechRecognition.continuous = true;
+    speechRecognition.interimResults = true;
     speechRecognition.maxAlternatives = 1;
     speechRecognition.lang = currentVoiceLang;
 
     speechRecognition.onstart = () => {
       isListening = true;
-      if (voiceBtn) {
-        voiceBtn.classList.add('listening');
-        voiceBtn.textContent = '⏹️'; // Clear visual toggle
+      if (voiceBtn) voiceBtn.classList.add('listening');
+      if (overlay) overlay.style.display = 'flex';
+      if (statusText) {
+        statusText.textContent = currentVoiceLang.startsWith('ar')
+          ? "جاري الاستماع... تحدث بوضوح"
+          : "Listening... Speak naturally";
       }
-      if (input) input.placeholder = (currentVoiceLang || 'en-US').startsWith('ar') 
-        ? "جاري الاستماع... تحدث بطلاقة (اضغط ⏹️ للإيقاف)..." 
-        : "Listening continuously... Speak now (tap ⏹️ to stop)...";
+      if (input) {
+        input.placeholder = currentVoiceLang.startsWith('ar')
+          ? "جاري تحويل صوتك إلى نص..."
+          : "Transcribing your voice live...";
+      }
     };
 
     speechRecognition.onresult = (event) => {
@@ -2049,41 +2361,46 @@ window.toggleVoiceInput = function() {
       for (let i = 0; i < event.results.length; ++i) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += transcript;
+          finalTranscript += transcript + ' ';
         } else {
           interimTranscript += transcript;
         }
       }
 
-      if (input) {
-        const fullLiveText = (finalTranscript + ' ' + interimTranscript).trim();
-        input.value = (basePrefix + fullLiveText).trim();
+      finalAccumulatedText = finalTranscript;
+      const combined = (finalTranscript + interimTranscript).trim();
+
+      if (input && combined) {
+        input.value = (basePrefix + combined).trim();
       }
 
-      // Reset comfortable 5-second silence grace period after user stops speaking
+      if (statusText && combined) {
+        statusText.textContent = `“${combined.slice(-45)}”`;
+      }
+
+      // Reset auto-pause silence timer (4 seconds)
       clearTimeout(silenceTimeout);
       silenceTimeout = setTimeout(() => {
-        if (isListening && (finalAccumulatedText || interimTranscript)) {
-          console.log('[Voice] Auto-finishing after natural speech pause.');
+        if (isListening && combined) {
+          console.log('[Gemini Voice] Silence detected. Finalizing transcription.');
           stopListeningUser();
         }
-      }, 5000);
+      }, 4000);
     };
 
     speechRecognition.onerror = (event) => {
-      console.warn('Speech recognition warning/error:', event.error);
+      console.warn('Speech recognition event:', event.error);
       if (event.error === 'not-allowed') {
         alert("Microphone permission was denied. Please allow microphone access in your browser settings.");
         stopListeningUser();
       } else if (event.error === 'no-speech') {
-        // Just keep listening unless user manually stops
+        // Keep active unless explicit timeout
       } else {
         stopListeningUser();
       }
     };
 
     speechRecognition.onend = () => {
-      // If user did not manually stop and it timed out naturally, cleanly finalize
       if (isListening) {
         stopListeningUser();
       }
@@ -2093,24 +2410,6 @@ window.toggleVoiceInput = function() {
   } catch (err) {
     console.error('Failed to start speech recognition:', err);
     stopListeningUser();
-  }
-
-  function stopListeningUser() {
-    isListening = false;
-    clearTimeout(silenceTimeout);
-    if (speechRecognition) {
-      try { speechRecognition.stop(); } catch (e) {}
-    }
-    if (voiceBtn) {
-      voiceBtn.classList.remove('listening');
-      voiceBtn.textContent = '🎤';
-    }
-    if (input) {
-      input.placeholder = "Type or speak a message for IBM Maximo (English or بالعربي)...";
-      if (input.value.trim().length > 0) {
-        input.focus();
-      }
-    }
   }
 };
 
@@ -2266,8 +2565,12 @@ window.exportWholeMachineCardPDF = function(cardEl, assetNum = 'ASSET') {
       currentY += 8;
 
       if (typeof doc.autoTable === 'function') {
+        const clonedCardTbl = tbl.cloneNode(true);
+        clonedCardTbl.querySelectorAll('th, td').forEach(c => {
+          c.innerText = cleanArabicMojibakeClient(c.innerText);
+        });
         doc.autoTable({
-          html: tbl,
+          html: clonedCardTbl,
           startY: currentY,
           theme: 'grid',
           margin: { left: margin, right: margin },
@@ -2275,12 +2578,14 @@ window.exportWholeMachineCardPDF = function(cardEl, assetNum = 'ASSET') {
             fillColor: [15, 23, 42],
             textColor: [56, 189, 248],
             fontStyle: 'bold',
-            fontSize: 8.5
+            fontSize: 8.5,
+            font: window.AMIRI_FONT_BASE64 ? 'Amiri' : undefined
           },
           styles: {
             fontSize: 7.5,
             cellPadding: 4.5,
-            overflow: 'linebreak'
+            overflow: 'linebreak',
+            font: window.AMIRI_FONT_BASE64 ? 'Amiri' : undefined
           },
           alternateRowStyles: {
             fillColor: [248, 250, 252]
@@ -2439,7 +2744,7 @@ window.exportTableToCSV = function(tableEl, filename = 'report.csv') {
   rows.forEach(row => {
     const cells = Array.from(row.querySelectorAll('th, td'));
     const line = cells.map(c => {
-      let text = c.innerText.trim().replace(/\r?\n|\r/g, ' ').replace(/"/g, '""');
+      let text = cleanArabicMojibakeClient(c.innerText.trim()).replace(/\r?\n|\r/g, ' ').replace(/"/g, '""');
       return `"${text}"`;
     }).join(',');
     csvLines.push(line);
@@ -2467,7 +2772,12 @@ window.exportTableToExcel = function(tableEl, filename = 'report.xlsx') {
   }
 
   try {
-    const wb = xlsxLib.utils.table_to_book(tableEl, { sheet: "Maximo Report", raw: true });
+    // Clone table to ensure cleaned Arabic text in export
+    const clonedTable = tableEl.cloneNode(true);
+    clonedTable.querySelectorAll('th, td').forEach(cell => {
+      cell.innerText = cleanArabicMojibakeClient(cell.innerText);
+    });
+    const wb = xlsxLib.utils.table_to_book(clonedTable, { sheet: "Maximo Report", raw: true });
     xlsxLib.writeFile(wb, filename);
   } catch (err) {
     console.error('Excel export error:', err);
@@ -2491,6 +2801,19 @@ window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report
       format: 'a4'
     });
 
+    // Register Unicode Arabic Font (Amiri) if available
+    let hasArabicFont = false;
+    if (window.AMIRI_FONT_BASE64) {
+      try {
+        doc.addFileToVFS('Amiri-Regular.ttf', window.AMIRI_FONT_BASE64);
+        doc.addFont('Amiri-Regular.ttf', 'Amiri', 'normal');
+        doc.setFont('Amiri');
+        hasArabicFont = true;
+      } catch (fErr) {
+        console.warn('Failed to register Amiri font:', fErr);
+      }
+    }
+
     const activeSite = document.getElementById('site-select')?.value || 'TEST';
 
     // Header Branding
@@ -2507,20 +2830,26 @@ window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report
 
     // AutoTable render with fallback
     if (typeof doc.autoTable === 'function') {
+      const clonedTable = tableEl.cloneNode(true);
+      clonedTable.querySelectorAll('th, td').forEach(cell => {
+        cell.innerText = cleanArabicMojibakeClient(cell.innerText);
+      });
       doc.autoTable({
-        html: tableEl,
+        html: clonedTable,
         startY: 75,
         theme: 'grid',
         headStyles: {
           fillColor: [15, 23, 42],
           textColor: [56, 189, 248],
           fontStyle: 'bold',
-          fontSize: 9
+          fontSize: 9,
+          font: hasArabicFont ? 'Amiri' : undefined
         },
         styles: {
           fontSize: 8.5,
           cellPadding: 5,
-          overflow: 'linebreak'
+          overflow: 'linebreak',
+          font: hasArabicFont ? 'Amiri' : undefined
         },
         alternateRowStyles: {
           fillColor: [248, 250, 252]
@@ -2540,7 +2869,7 @@ window.exportTableToPDF = function(tableEl, reportTitle = 'IBM Maximo EAM Report
 // Toggle Universal Application Dropdown Menu (Burger Menu)
 window.toggleAppMenu = function() {
   const menu = document.getElementById('app-dropdown-menu');
-  const burger = document.getElementById('btn-burger');
+  const burger = document.getElementById('btn-avatar-menu') || document.getElementById('btn-burger');
   if (!menu) return;
   menu.classList.toggle('open');
   if (burger) burger.classList.toggle('active');
@@ -2549,7 +2878,7 @@ window.toggleAppMenu = function() {
 // Close dropdown menu when clicking anywhere outside
 document.addEventListener('click', function(e) {
   const menu = document.getElementById('app-dropdown-menu');
-  const burger = document.getElementById('btn-burger');
+  const burger = document.getElementById('btn-avatar-menu') || document.getElementById('btn-burger');
   if (menu && menu.classList.contains('open')) {
     if (!menu.contains(e.target) && !burger.contains(e.target)) {
       menu.classList.remove('open');
@@ -2591,6 +2920,7 @@ function updateThemeUI(theme) {
 // Initial load
 (async () => {
   initTheme();
+  initSidebarState();
   const isAuthed = await checkAuth();
   if (isAuthed) {
     await loadContext();

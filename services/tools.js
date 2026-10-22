@@ -1,4 +1,7 @@
+import { deepCleanMaximoData } from './arabicCleaner.js';
+import { enterpriseDepartmentsService } from './enterpriseDepartmentsService.js';
 import { maximoService } from './maximo.js';
+import { executiveRoiService } from './executiveRoiService.js';
 import { mcpClientManager } from './mcpClientService.js';
 import { searchTavily } from './tavily.js';
 import { ragService } from './ragService.js';
@@ -27,6 +30,38 @@ import {
 
 // The Tool Registry ties the AI schema directly to the JS execution function
 const toolRegistry = [
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'simulate_enterprise_chiller_incident',
+        description: 'Simulates complete multi-departmental autonomous incident orchestration when a chiller fails across Technical Office, HR, Supply Chain, QHSE, Finance, and IT.',
+        parameters: {
+          type: 'object',
+          properties: {
+            assetnum: { type: 'string', description: 'Chiller or asset identifier (e.g. CHILLER-01).' },
+            siteid: { type: 'string', description: 'Facility site code (optional).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => enterpriseDepartmentsService.simulateChillerFailureWorkflow(args || {})
+  },
+
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_enterprise_departments_roadmap',
+        description: 'Enterprise multi-department integration roadmap and architecture covering Technical Office, QHSE, Supply Chain, HR, Finance, and IT for Eden Facility Management.',
+        parameters: {
+          type: 'object',
+          properties: {}
+        }
+      }
+    },
+    execute: async () => enterpriseDepartmentsService.getEnterpriseRoadmap()
+  },
   // --- WORK ORDERS ---
   {
     schema: {
@@ -295,6 +330,7 @@ const toolRegistry = [
         parameters: {
           type: 'object',
           properties: {
+            all_sites: { type: 'boolean', description: 'Set to true to calculate assets across all 47 facility sites in the portfolio.' },
             siteid: { type: 'string', description: 'Maximo Site ID (defaults to system site).' },
             status: { type: 'string', description: 'Optional status filter, e.g. OPERATING, DECOMMISSIONED, NOT READY.' }
           }
@@ -723,6 +759,22 @@ const toolRegistry = [
       }
     },
     execute: async (args) => await maximoService.generateExecutiveAuditBrief(args || {})
+  },
+  {
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_executive_roi_cost_avoidance',
+        description: 'Calculate comprehensive Executive ROI & Maintenance Cost Avoidance scorecard showing financial value delivered (catastrophic failure prevention, 90% in-house labor savings, energy efficiency, and SLA clawbacks).',
+        parameters: {
+          type: 'object',
+          properties: {
+            siteid: { type: 'string', description: 'Maximo Site ID (optional, defaults to active site).' }
+          }
+        }
+      }
+    },
+    execute: async (args) => await executiveRoiService.getExecutiveRoiCostAvoidance(args || {})
   },
 
   // --- TECHNICAL KNOWLEDGE BASE / RAG ---
@@ -1228,5 +1280,6 @@ export async function executeTool(toolName, args = {}, context = {}) {
     }
   }
 
-  return await tool.execute(args, context);
+  const rawResult = await tool.execute(args, context);
+  return deepCleanMaximoData(rawResult);
 }

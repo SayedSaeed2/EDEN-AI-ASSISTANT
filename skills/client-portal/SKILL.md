@@ -10,6 +10,9 @@ commands:
   - command: "/my-tickets"
     description: "Track status and estimated completion for Service Requests (SRs) logged in your facility site over a specific period"
     example: "/my-tickets site=REGALH-G1 period=30d"
+  - command: "/work-orders"
+    description: "Query and list Work Orders (WOs) filtered by site, status (WAPPR, APPR, INPRG, COMP, CLOSE), period, and limit"
+    example: "/work-orders site=REGALH-G1 status=INPRG period=30d limit=25"
 tools:
   - create_service_request
   - get_service_requests
